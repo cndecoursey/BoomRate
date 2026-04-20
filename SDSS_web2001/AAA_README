@@ -1,0 +1,25 @@
+I got these responses in 25 A bins from
+
+    http://www.sdss.org/dr3/instruments/imager/
+           or
+    snlc_v4/filters/sdss-*.dat
+
+There is an SDSS web-page
+   http://home.fnal.gov/~annis/astrophys/filters/filters.new
+which has 100 A bins. These two sets should be compared
+at some point.
+
+
+-0.037  0.024  0.005  0.018  0.016  # Marriner:Solar analogs
+-0.033  0.016  0.011  0.013  0.015  # Marriner:HST-WD-Standards
+
+
+
+R.Kessler 3/30/2006
+
+4/19/2007: added AB_offsets.dat
+4/23/2008: note that transmission is in photon counts
+
+Aug 2009:  note that AB_offsets.dat is obsolete; 
+           SNANA has been using ZPOFF.DAT for a long time.
+
