@@ -1,0 +1,39 @@
+{
+    "_comment" : "This is just a test of the number of events expected",
+    "review" : "false",
+    "verbose" :  "true",
+    "multiproc" : "true",
+    "clobber" : "true",
+
+    "sntypes" : ["ia"],
+    "imf_evol" : null,
+    "extinction" : "true",
+    "obs_extin":"extra",
+    "biascor" : "flat",
+    "_biascor" : "malmquist",
+    "_biascor" : "fractional",
+    "cadence_file" : "./cadence_jades_F150W.txt",
+    "passband" : "./JWST_filters/F150W.txt",
+    "passskiprow" : 1,
+    "passwavemult" : 1000,
+    
+    "itermag" : "false",
+    "eventtable": "JADES_SN_Classifications_final_F150W.txt",
+    "determinate": "false",
+    "falseevents": "false",
+    "falsetable": "",
+
+    "nbins":3,
+    "redshift_binning": null,
+    "_redshift_binning":[0.95, 1.50, 2.06, 2.77, 5.17],
+    "_redshift_binning":[0.95, 1.50, 2.06, 2.81, 4.82],
+    "_redshift_binning":[0.93, 1.92, 3.60, 5.92],
+    "_redshift_binning":[1.05, 1.92, 3.70, 5.41],
+    "day_step":5,
+    "abs_mag_step":0.1,
+    "extinction_step":0.1,
+    "box_tc": "true",
+    
+    "outfile_numbers" : "jades_ia_numbers_F150W_nondet_260330.pkl",
+    "outfile_rates" : "jades_ia_rates_F150W_nondet_260330.pkl"
+}

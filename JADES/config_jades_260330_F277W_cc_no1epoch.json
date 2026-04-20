@@ -1,0 +1,39 @@
+{
+    "_comment" : "This is just a test of the number of events expected",
+    "review" : "false",
+    "verbose" :  "true",
+    "multiproc" : "true",
+    "clobber" : "true",
+
+    "sntypes" :  ["iip", "iil", "iin", "ic", "ib"],
+    "imf_evol" : null,
+    "extinction" : "true",
+    "obs_extin":"extra",
+    "_biascor" : "flat",
+    "_biascor" : "malmquist",
+    "biascor" : "fractional",
+    "cadence_file" : "./cadence_jades_no1epoch_F277W.txt",
+    "passband" : "./JWST_filters/F277W.txt",
+    "passskiprow" : 1,
+    "passwavemult" : 1000,
+    
+    "itermag" : "false",
+    "eventtable": "JADES_SN_Classifications_final_no1epoch_F277W.txt",
+    "determinate": "false",
+    "falseevents": "false",
+    "falsetable": "",
+
+    "nbins":4,
+    "redshift_binning": null,
+    "_redshift_binning":[0.95, 1.50, 2.06, 2.77, 5.17],
+    "_redshift_binning":[0.95, 1.50, 2.06, 2.81, 4.82],
+    "_redshift_binning":[0.93, 1.92, 3.60, 5.92],
+    "_redshift_binning":[1.05, 1.92, 3.70, 5.41],
+    "day_step":5,
+    "abs_mag_step":0.1,
+    "extinction_step":0.1,
+    "box_tc": "true",
+    
+    "outfile_numbers" : "jades_cc_numbers_F277W_nondet_no1epoch_260330.pkl",
+    "outfile_rates" : "jades_cc_rates_F277W_nondet_no1epoch_260330.pkl"
+}
