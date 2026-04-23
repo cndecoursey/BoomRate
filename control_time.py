@@ -64,7 +64,14 @@ vol_frac_c= { ## To reproduce Dahlen et al. 2012
 
     
 
-vol_frac=vol_frac_c
+vol_frac=vol_frac_a
+
+# Normalize CC subtype fractions so they sum to 1 (preserve non-CC keys like 'ia','slsn')
+_cc_keys = [k for k in vol_frac if k not in ('ia', 'slsn')]
+_cc_sum  = sum(vol_frac[k] for k in _cc_keys)
+if _cc_sum > 0:
+    vol_frac = {k: (v/_cc_sum if k in _cc_keys else v) for k, v in vol_frac.items()}
+del _cc_keys, _cc_sum
 
 template_peak = { ##the assumed normalization for the SNANA templates
     'iip': -16.05,
@@ -136,11 +143,12 @@ color_cor_slsn={
     }
 
 
-def run(redshift, baseline, sens, base_root, sndata_root, model_path, 
+def run(redshift, baseline, sens, base_root, sndata_root, model_path,
         type=['iip'], dstep=3, dmstep=0.5, dastep=0.5,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
-        plot=False, verbose=False, review=False, biascor='flat'):
+        plot=False, verbose=False, review=False, biascor='flat',
+        subtype_combination='divide_average'):
     #sndata_root = m_root + '/Documents/SNANA/SNANA_2025'  # path to your SNANA files
     #model_path = BASE_ROOT+'/templates/non1a'
     
@@ -464,8 +472,11 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path,
     else: ## assume flat
         rel_num =  1.0
 
-    tot_ctrl=tot_ctrl/rel_num
-    
+    if subtype_combination == 'forward':
+        tot_ctrl = tot_ctrl * rel_num      # forward model: T_raw * f_X (weighted contribution)
+    else:
+        tot_ctrl = tot_ctrl / rel_num      # divide_average (original)
+
     if verbose:
         print('for %s at redshift=%.1f'%(type[0].upper(), redshift))
         print('and SN Fraction of %.2f'%(rel_num))

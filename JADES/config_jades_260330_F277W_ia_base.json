@@ -1,5 +1,10 @@
 {
     "_comment" : "This is just a test of the number of events expected",
+    "run_name": "jades_260330_F277W_ia_base",
+    "base_root": "/home/clvass/Downloads/BoomRate",
+    "sndata_root": "/home/clvass/Other_codes/SNANA/SNDATA_ROOT",
+    "model_path": "/home/clvass/Downloads/BoomRate/templates/non1a",
+
     "review" : "false",
     "verbose" :  "true",
     "multiproc" : "true",
@@ -13,12 +18,12 @@
     "_biascor" : "malmquist",
     "_biascor" : "fractional",
     "cadence_file" : "./cadence_jades_F277W.txt",
-    "passband" : "./JWST_filters/F277W.txt",
+    "passband" : "../JWST_filters/F277W.txt",
     "passskiprow" : 1,
     "passwavemult" : 1000,
     
     "itermag" : "false",
-    "eventtable": "JADES_SN_Classifications_final_F277W.txt",
+    "eventtable": "./JADES_SN_Classifications_base_F277W.txt",
     "determinate": "false",
     "falseevents": "false",
     "falsetable": "",
@@ -34,6 +39,6 @@
     "extinction_step":0.1,
     "box_tc": "true",
     
-    "outfile_numbers" : "jades_ia_numbers_F277W_nondet_260330.pkl",
-    "outfile_rates" : "jades_ia_rates_F277W_nondet_260330.pkl"
+    "outfile_numbers" : "./jades_ia_numbers_F277W_nondet_260330.pkl",
+    "outfile_rates" : "./jades_ia_rates_F277W_nondet_260330.pkl"
 }

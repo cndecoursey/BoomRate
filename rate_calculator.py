@@ -57,7 +57,14 @@ vol_frac_c= { ## To reproduce Dahlen et al. 2012
 
     
 
-vol_frac=vol_frac_c
+vol_frac=vol_frac_a
+
+# Normalize CC subtype fractions so they sum to 1 (preserve non-CC keys like 'ia','slsn')
+_cc_keys = [k for k in vol_frac if k not in ('ia', 'slsn')]
+_cc_sum  = sum(vol_frac[k] for k in _cc_keys)
+if _cc_sum > 0:
+    vol_frac = {k: (v/_cc_sum if k in _cc_keys else v) for k, v in vol_frac.items()}
+del _cc_keys, _cc_sum
 
 absmags_li_2011 = {
     'iip': [-15.66, 1.23, 0.16],
@@ -220,7 +227,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
         types=['ia'],Nproc=1,extinction=True,obs_extin=True,survey=None, cadence_file=None, passband=None,
         verbose=verbose, maglim=22., parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1,
-        biascor=None, review = False,
+        biascor=None, subtype_combination='divide_average', review = False,
         ratefile=None, eventtable=None):
     rate=0.0
     N={}
@@ -259,7 +266,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                       type=[type], prev=prev, passband=passband,
                                       passwavemult=passwavemult, passskiprow=passskiprow,
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                      biascor=biascor, review=review,
+                                      biascor=biascor, subtype_combination=subtype_combination, review=review,
                                       verbose=verbose, plot=True,
                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path)
             else:
@@ -268,7 +275,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                       biascor=biascor, review=review,
+                                       biascor=biascor, subtype_combination=subtype_combination, review=review,
                                        verbose=verbose,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path)
                 tc2 = control_time.run(redshift2, baseline, sens, Nproc=Nproc, parallel=parallel,
@@ -276,7 +283,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                       biascor=biascor, review=review,
+                                       biascor=biascor, subtype_combination=subtype_combination, review=review,
                                        verbose=verbose, plot=True,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path)
                 xx =array([redshift1, redshift2])
@@ -307,8 +314,16 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
         print("\n")
 
     print('-------\n')
-    Nexp = sum(list(N.values()))/len(types)
-    tc_tot = tc_tot/len(types)
+    if subtype_combination == 'forward':
+        # physically correct: control_time returned f_X * T_raw_X per subtype;
+        # sum across subtypes, no /N_types averaging
+        Nexp = sum(list(N.values()))
+        # tc_tot already holds sum_X (f_X * T_raw_X) summed over survey rows
+    else:
+        # 'divide_average' (original): control_time returned T_raw_X / f_X per subtype;
+        # average across subtypes
+        Nexp = sum(list(N.values())) / len(types)
+        tc_tot = tc_tot / len(types)
 
     ## pdb.set_trace()
     
@@ -406,6 +421,7 @@ def main(configfile=None):
     except:
         obs_extin = config['obs_extin']
     biascor = config['biascor']
+    subtype_combination = config.get('subtype_combination', 'divide_average')
 
     cadence_file=config['cadence_file']
     itermag = json.loads(config['itermag'])
@@ -687,6 +703,7 @@ def main(configfile=None):
                                         eventtable=eventtable,
                                         ratefile=out_rate_file,
                                         biascor=biascor,
+                                        subtype_combination=subtype_combination,
                                         review = review,
                                         run_name = run_name,
                                         base_root = base_root,

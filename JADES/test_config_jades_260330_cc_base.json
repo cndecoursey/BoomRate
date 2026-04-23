@@ -1,8 +1,8 @@
 {
     "run_name": "test_jades_cc_rates_nondet_base_260422",
-    "base_root": "/Users/christadecoursey/Documents/JADES/SN_Classification_and_Rates_Paper/classification/BoomRate",
-    "sndata_root": "/Users/christadecoursey/Documents/SNANA/SNANA_2025",
-    "model_path": "/Users/christadecoursey/Documents/JADES/SN_Classification_and_Rates_Paper/classification/BoomRate/templates/non1a",
+    "base_root": "/home/clvass/Downloads/BoomRate",
+    "sndata_root": "/home/clvass/Other_codes/SNANA/SNDATA_ROOT",
+    "model_path": "/home/clvass/Downloads/BoomRate/templates/non1a",
 
     "_comment" : "This is just a test of the number of events expected",
     "review" : "false",

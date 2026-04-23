@@ -11,7 +11,7 @@ import os,sys
 from scipy import *
 from scipy.integrate import quad
 from math import sqrt, log10, pi
-co = 3.0e5 #speed of light km/s
+co = 299792.458 #speed of light km/s
 
 
 def main():
