@@ -24,6 +24,7 @@ import multiprocessing
 import json, logging
 import pandas as pd
 from scipy import stats
+from astropy.convolution import convolve, Gaussian1DKernel
 
 
 
@@ -153,9 +154,69 @@ def fline(x,*p):
     m,b = p
     return m*x+b
 
+def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name):
+    """
+    Plots the smoothed redshift probability distribution and cumulative distribution
+    with redshift bin boundaries and observed SN counts per bin.
+    
+    Parameters
+    ----------
+    redshift_tmp: array 
+        Redshift grid from 0 to 10 in steps of dzza
+    rv: array
+        Summed redshift probability distribution across all SNe
+    dzza: float
+        Redshift grid step size
+    redshifts: array
+        Bin edges
+    ng: array
+        Observed number of SNe in each bin
+    sntypes: list
+        List of SN types being considered
+    run_name: str
+        Name of the current run, used for the output filename
+    """
+
+    smooth_rv = convolve(rv*dzza, Gaussian1DKernel(10), boundary='extend')
+
+    fig, (ax1, ax2) = subplots(1, 2, figsize=(14, 5))
+
+    # Left panel: redshift distribution 
+    ax1.plot(redshift_tmp, smooth_rv, 'k-')
+    ax1.set_xlabel('Redshift')
+    ax1.set_xlim(0, 6)
+    if 'ia' in sntypes:
+        ax1.set_ylabel('Number of SNeIa')
+    else:
+        ax1.set_ylabel('Number of CCSNe')
+
+    # Shade each redshift bin and label with observed counts
+    colors = ['#d0e8f0', '#f0d8c0', '#d0f0d0', '#f0d0e8', '#e8f0d0']
+    for i in range(len(redshifts)-1):
+        ax1.axvspan(redshifts[i], redshifts[i+1], alpha=0.3, color=colors[i % len(colors)],
+                    label='z=%.2f-%.2f, N=%.1f' %(redshifts[i], redshifts[i+1], ng[i]))
+    ax1.legend(loc=1, fontsize=9, title='Total N=%.1f' %sum(ng), title_fontsize=10)
+
+    # Right panel: cumulative distribution 
+    ax2.plot(redshift_tmp, cumsum(rv)*dzza, 'k-', label='%.1f Total' %(cumsum(rv)[-1]*dzza))
+    ax2.set_xlabel('Redshift')
+    ax2.set_xlim(0, 6)
+    if 'ia' in sntypes:
+        ax2.set_ylabel('Cumulative number of SNeIa')
+    else:
+        ax2.set_ylabel('Cumulative number of CCSNe')
+
+    # Show bin boundaries as vertical lines
+    for z in redshifts:
+        ax2.axvline(z, color='gray', ls='--', lw=1)
+    ax2.legend(loc=2, fontsize=9)
+
+    tight_layout()
+    savefig('diagnostic_plots/%s_redshift_dist.png' %run_name)
+    clf()
 
 
-def run(redshift2, redshift1, rate_guess, number_guess,
+def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, sndata_root, model_path,
         types=['ia'],Nproc=1,extinction=True,obs_extin=True,survey=None, cadence_file=None, passband=None,
         verbose=verbose, maglim=22., parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1,
@@ -167,11 +228,6 @@ def run(redshift2, redshift1, rate_guess, number_guess,
     redshift = (redshift2+redshift1)/2.
     print('z=%2.2f rg=%2.2f no=%2.1f' %(redshift, rate_guess, number_guess))
     rate_guess = rate_guess*1.0e-4
-    
-    ### Survey Constants
-    #tess_area = (60.)**2 ## a square degree, to put the final number in per sq. degree
-    #tess_sens = 17.0 ## mag
-    #survey = make_cadence_table(types,redshift, tess_sens=maglim)
 
     if cadence_file and not survey:
         survey = loadtxt(cadence_file)
@@ -189,7 +245,10 @@ def run(redshift2, redshift1, rate_guess, number_guess,
     for i,item in enumerate(survey):
         baseline=item[0]
         area = item[1]
+
+        # Convert the survey area from arcminutes to fraction of the total sky
         area_frac = area * (1./60.)**2*(pi/180)**2*(4.0*pi)**(-1)
+
         sens = maglim
         prev = item[3]
         for type in types:
@@ -201,7 +260,8 @@ def run(redshift2, redshift1, rate_guess, number_guess,
                                       passwavemult=passwavemult, passskiprow=passskiprow,
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
                                       biascor=biascor, review=review,
-                                      verbose=verbose, plot=True)
+                                      verbose=verbose, plot=True,
+                                      base_root=base_root, sndata_root=sndata_root, model_path=model_path)
             else:
                 tc1 = control_time.run(redshift1, baseline, sens, Nproc=Nproc, parallel=parallel,
                                        extinction=extinction, obs_extin=obs_extin,
@@ -209,14 +269,16 @@ def run(redshift2, redshift1, rate_guess, number_guess,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, review=review,
-                                       verbose=verbose)
+                                       verbose=verbose,
+                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path)
                 tc2 = control_time.run(redshift2, baseline, sens, Nproc=Nproc, parallel=parallel,
                                        extinction=extinction, obs_extin=obs_extin,
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, review=review,
-                                       verbose=verbose, plot=True)
+                                       verbose=verbose, plot=True,
+                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path)
                 xx =array([redshift1, redshift2])
                 yy = array([tc1,tc2])
                 yy[isnan(yy)]=0.0 ## remove any nans
@@ -322,6 +384,12 @@ def main(configfile=None):
         return() 
     with open(configfile) as data_file:
         config = json.loads(data_file.read())
+
+    run_name = config['run_name']
+    base_root = config['base_root']
+    sndata_root = config['sndata_root']
+    model_path = config['model_path']
+
     clobber = json.loads(config['clobber'])
     verbose = json.loads(config['verbose'])
 
@@ -436,21 +504,34 @@ def main(configfile=None):
                 else:
                     ax.set_ylabel('Number of CCSNe')
                 ax.legend(loc=1)
-                savefig('tmp1.png')
+                savefig('diagnostic_plots/tmp1.png')
                 clf()
                 
             else: #not determinate
+
+                ####################################################################
+                # Computing the Summed Redshift Probability Distribution for all SNe
+                ####################################################################
+
+                # Set the redshift step size
                 dzza=0.001
+
                 redshift_tmp=arange(0,10+dzza,dzza)
                 rv = zeros(len(redshift_tmp))
+
                 for index, row in sn_table.iterrows():
                     if row['pIa']==row['pII']==row['pIbc']==-0.99: continue
                     if row['pIa']==row['pII']==row['pIbc']==-99: continue
+
                     zz = row['z_host']
                     dzz = row['z_host_err']
+
+                    # For spec-zs (where 'z_host_err' is -99 or NaN or 0), set redshift uncertainty to 0.001 (to avoid infinitely narrow Gaussians)
                     if ((dzz == -99.0) | (isnan(dzz)) | (dzz==0.0)): dzz = dzza
+
                     if 'ia' in sntypes:
                         if isnan(row['pIa']): continue
+                        # Build a Gaussian probability distribution centered at host_z (zz), with host_z_err as width (dzz), and weighted by Ia probability
                         rv_tmp = stats.norm.pdf(redshift_tmp, loc=zz, scale=dzz)*row['pIa']
                     elif (('iil' in sntypes) or ('iip' in sntypes)
                           or ('ic' in sntypes) or ('ib' in sntypes) or ('iin' in sntypes)):
@@ -461,47 +542,41 @@ def main(configfile=None):
                         ## rv_tmp=rv_tmp1+rv_tmp2 ## this method doesn't handle nan's all that well
                     else:
                         print('Only set for SNe Ia and CCSNe\n')
+
+                    # Stacking all of the individual source redshift probablity distributions on top of each other
                     if not isnan(sum(rv_tmp)):
                         rv+=rv_tmp
-                pv = cumsum(rv)*dzza#/sum(rv)
 
-                ax = subplot(111)
-                ax.plot(redshift_tmp,rv*dzza,'k-')
-                ax.set_xlabel('Redshift')
-                ax.set_xlim(0,6)
-                if 'ia' in sntypes:
-                    ax.set_ylabel('Number of SNeIa')
-                else:
-                    ax.set_ylabel('Number of CCSNe')
-                savefig('tmp1.png')
-                clf()
-                ax = subplot(111)
-                ax.plot(redshift_tmp,cumsum(rv)*dzza, 'k-', label='%.1f Total'%(cumsum(rv)[-1]*dzza))
-                ax.set_xlabel('Redshift')
-                ax.set_xlim(0,6)
-                if 'ia' in sntypes:
-                    ax.set_ylabel('Cumulative number of SNeIa')
-                else:
-                    ax.set_ylabel('Cumulative number of CCSNe')
-                ax.legend(loc=1)
-                savefig('tmp2.png')
-                clf()
+                # Computing the redshift cumulative probability distribution
+                pv = cumsum(rv)*dzza#/sum(rv)
 
                 if redshift_binning is not None:
                     bins = array(redshift_binning)
+
+                ############################################
+                # Setting the Non-Determinate Redshift Bins 
+                ############################################
+
                 else:
-                    bins=zeros(Nbins+1)
-                    for i,split in enumerate(splits):
+                    bins=zeros(Nbins+1) # bin edges array
+                    for i,split in enumerate(splits): # e.g., if Nbins=4, splits is [0, 0.25, 0.5, 0.75, 1.0]
                         if i==0: continue
-                        ii =where(pv/pv[-1]<=split)
+                        ii =where(pv/pv[-1]<=split) # pv/pv[-1] normalizes cumulative distribution to [0,1]
                         try:
+                            # Set the bin edge to the redshift at which exactly 'split' fraction of the sample has been accumulated
                             bins[i]=redshift_tmp[ii][-1]
                         except:
                             pdb.set_trace()
+
+                    # Set the lower edge of the first bin to the redshift where the cumulative distribution first becomes non-negligible
                     ii = where(pv/pv[-1] < 0.001)
                     bins[0]=redshift_tmp[ii][-1]
+
+                    # Sets the upper edge of the last bin to the redshift where the cumulative distribution reaches negligibly close to 1
                     ii = where((pv[-1]-pv)/pv[-1] < 0.001) #set to 1/1000 of a difference. Could be smaller.
                     bins[-1]=redshift_tmp[ii][0]
+
+                # Determine the observed number of SNe are in each of your determinate redshift bins
                 ng = zeros(len(bins)-1,)
                 for i,bin in enumerate(bins):
                     if i == 0: continue
@@ -510,6 +585,18 @@ def main(configfile=None):
                 redshifts = bins
         med_z = (redshifts[1:]+redshifts[:-1])/2.
         ## pdb.set_trace()
+
+        # Analyzing any difference between cumulative redshift distribution total and sum of ng
+        #print("pv[-1]:", pv[-1])
+        #print("sum(rv)*dzza:", sum(rv)*dzza)
+        #print("sum(ng):", sum(ng))
+        #print("pv at bins[-1]:", pv[argmin(abs(redshift_tmp - bins[-1]))])
+        #print("pv at bins[0]:", pv[argmin(abs(redshift_tmp - bins[0]))])
+        #print("pv at bins[-1] - pv at bins[0]:", pv[argmin(abs(redshift_tmp - bins[-1]))] - pv[argmin(abs(redshift_tmp - bins[0]))])
+
+        # Redshift Distribution Diagnostic Plots
+        # plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name)
+
         
         if 'ia' in sntypes:
             rg = array(snrates_Ia(med_z))## for SNe Ia, from Strolger et al. 2020
@@ -601,6 +688,10 @@ def main(configfile=None):
                                         ratefile=out_rate_file,
                                         biascor=biascor,
                                         review = review,
+                                        run_name = run_name,
+                                        base_root = base_root,
+                                        sndata_root = sndata_root,
+                                        model_path = model_path
                                         )
                 numbers.append([mag, num, nhi, nlo, (redshifts[i]+redshifts[i-1])/2., redshifts[i-1], redshifts[i]])
         numbers=array(numbers)
@@ -608,6 +699,7 @@ def main(configfile=None):
         pickle.dump(numbers,open(outfile,'wb'))
     else:
         outdata = pickle.load(open(outfile,'rb'))
+
 
 if __name__=='__main__':
     

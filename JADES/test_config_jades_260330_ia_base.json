@@ -1,5 +1,6 @@
 {
     "_comment" : "This is just a test of the number of events expected",
+    "run_name": "test_jades_ia_rates_nondet_base_260422",
     "review" : "false",
     "verbose" :  "true",
     "multiproc" : "true",
@@ -8,17 +9,17 @@
     "sntypes" : ["ia"],
     "imf_evol" : null,
     "extinction" : "true",
-    "obs_extin" : "nominal",
-    "biascor" : "flat",
+    "obs_extin":"nominal",
+    "_biascor" : "flat",
     "_biascor" : "malmquist",
-    "_biascor" : "fractional",
-    "cadence_file" : "./cadence_jades_no1epoch_F277W.txt",
-    "passband" : "./JWST_filters/F277W.txt",
+    "biascor" : "fractional",
+    "cadence_file" : "./JADES/cadence_jades_F356W.txt",
+    "passband" : "./JWST_filters/F356W.txt",
     "passskiprow" : 1,
     "passwavemult" : 1000,
     
     "itermag" : "false",
-    "eventtable": "JADES_SN_Classifications_final_no1epoch_F277W.txt",
+    "eventtable": "./JADES/JADES_SN_Classifications_base.txt",
     "determinate": "false",
     "falseevents": "false",
     "falsetable": "",
@@ -30,10 +31,10 @@
     "_redshift_binning":[0.93, 1.92, 3.60, 5.92],
     "_redshift_binning":[1.05, 1.92, 3.70, 5.41],
     "day_step":5,
-    "abs_mag_step":0.5,
-    "extinction_step":0.5,
+    "abs_mag_step":0.1,
+    "extinction_step":0.1,
     "box_tc": "true",
     
-    "outfile_numbers" : "jades_ia_numbers_F277W_nondet_no1epoch_260330.pkl",
-    "outfile_rates" : "jades_ia_rates_F277W_nondet_no1epoch_260330.pkl"
+    "outfile_numbers" : "outfiles/test_jades_ia_numbers_F356W_nondet_260330.pkl",
+    "outfile_rates" : "outfiles/test_jades_ia_rates_F356W_nondet_260330.pkl"
 }

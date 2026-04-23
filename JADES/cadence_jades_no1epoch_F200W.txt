@@ -1,3 +1,3 @@
 #Cadence(days)  Area(sqarcmin)  Sens(iA) Prev_baseline
-365.25		21.9		29.7	 0
-## 365.25		25		29.7	 365.25
+365.25		21.9		29.8	 0
+## 365.25		25		29.8	 365.25
