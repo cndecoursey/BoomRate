@@ -26,14 +26,6 @@ from astropy.convolution import convolve, Box1DKernel, Gaussian1DKernel
 import warnings#,exceptions
 warnings.simplefilter("error",RuntimeWarning)
 
-
-#m_root = os.environ['HOME']
-##BASE_ROOT = os.path.dirname('/'.join(os.path.realpath(__file__).split('/')[:-1]))
-#BASE_ROOT = os.path.dirname(os.path.realpath(__file__))
-#sndata_root = m_root + '/Documents/SNANA/SNANA_2025'  # path to your SNANA files
-#model_path = BASE_ROOT + '/templates/non1a' # path to 'templates' in the BoomRate repository
-
-
 rcParams['figure.figsize']=12,9
 rcParams['font.size']=16.0
 
@@ -68,7 +60,8 @@ vol_frac=vol_frac_a
 
 # Normalize CC subtype fractions so they sum to 1 (preserve non-CC keys like 'ia','slsn')
 _cc_keys = [k for k in vol_frac if k not in ('ia', 'slsn')]
-_cc_sum  = sum(vol_frac[k] for k in _cc_keys)
+#_cc_sum  = sum(vol_frac[k] for k in _cc_keys)
+_cc_sum = sum(list(vol_frac[k] for k in _cc_keys))
 if _cc_sum > 0:
     vol_frac = {k: (v/_cc_sum if k in _cc_keys else v) for k, v in vol_frac.items()}
 del _cc_keys, _cc_sum
@@ -114,7 +107,7 @@ absmags_dahlen_2012 = {
     }
     
 
-absmags=absmags_dahlen_2012
+absmags=absmags_richardson_2014
 
 
 #absmag_new = {}
@@ -144,39 +137,37 @@ color_cor_slsn={
 
 
 def run(redshift, baseline, sens, base_root, sndata_root, model_path,
-        type=['iip'], dstep=3, dmstep=0.5, dastep=0.5,
+        type, dstep=3, dmstep=0.5, dastep=0.5,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
         plot=False, verbose=False, review=False, biascor='flat',
         subtype_combination='divide_average'):
-    #sndata_root = m_root + '/Documents/SNANA/SNANA_2025'  # path to your SNANA files
-    #model_path = BASE_ROOT+'/templates/non1a'
     
-    ### define the filters-- important for later
+    # Define the filters; important for later
     if verbose: print('defining restframe sloan filters...')
 
+    # Build a dict that maps filter central wavelengths to filter file paths, which will
+    # be used later to find the best matching rest-frame filter for the K-correction
     filter_dict={}
-    #print("type:", type)
     if 'ia' in type:
         for bessel_filter in glob.glob(sndata_root +'/filters/Bessell90/Bessell90_K09/Bessell90_?.dat'):
-            elam = get_central_wavelength(bessel_filter, wavemult=0.1)
+            elam = get_central_wavelength(bessel_filter, wavemult=0.1) # wavemult converts Ang to nm
             filter_dict[elam]=bessel_filter
     else:
-        #print("Searching for SDSS filters at:", sndata_root+'/filters/SDSS/SDSS_web2001/?.dat')
         for sdss_filter in glob.glob(sndata_root+'/filters/SDSS/SDSS_web2001/?.dat'):
-            elam = get_central_wavelength(sdss_filter, wavemult=0.1)
+            elam = get_central_wavelength(sdss_filter, wavemult=0.1) # wavemult converts Ang to nm
             filter_dict[elam]=sdss_filter
-        #print("filter_dict keys:", list(filter_dict.keys()))
 
-    ### observed filter
+    # Observed filter
     if verbose: print('observed filter...')
-    if passband is not None:
-        observed_filter = passband
-    else:
-        #observed_filter=sndata_root+'/filters/JWST/NIRCAM/F444W_NRC_and_OTE_ModAB_mean.txt'
-        #observed_filter=sndata_root+'/filters/HST/HST_GOODS/F850LP_ACS.dat'
-        observed_filter=sndata_root+'/filters/HST/HST_Candles/ACS_WFC_F435W.dat'
-        passwavemult=0.1
+    #if passband is not None:
+    #    observed_filter = passband
+    #else:
+    #    #observed_filter=sndata_root+'/filters/JWST/NIRCAM/F444W_NRC_and_OTE_ModAB_mean.txt'
+    #    #observed_filter=sndata_root+'/filters/HST/HST_GOODS/F850LP_ACS.dat'
+    #    observed_filter=sndata_root+'/filters/HST/HST_Candles/ACS_WFC_F435W.dat'
+    #    passwavemult=0.1
+    observed_filter = passband # you are forced to specify a passband when calling run(); cannot use None
     ofilter_cen = get_central_wavelength(observed_filter,skip=passskiprow,wavemult=passwavemult)
     if verbose: print('observed filter effective wavelength= %4.1f nm'%ofilter_cen)
 
@@ -533,8 +524,11 @@ def det_eff_box(delta_mag,mc=25.8):
 def get_central_wavelength(filter_file, skip=0, wavemult=1.):
     filter_data = loadtxt(filter_file,skiprows=skip)
     filter_data[:,0]=filter_data[:,0]*wavemult
+    # Create a smooth, evenly sampled grid to interpolate the filter profile onto. Padded on each side
     fit_x = arange(min(filter_data[:,0])-25.,max(filter_data[:,0])+25.,5.)
+    # Interpolate the filter transmission profile onto the new uniform wavelength grid fit_x
     (junk,fit_y) = u.recast(fit_x,0.,filter_data[:,0],filter_data[:,1])
+    # Compute the effective central wavelength as a flux-weighted mean
     elam = int(sum(fit_y*fit_x)/sum(fit_y)+0.5)
     return(elam)
     

@@ -61,7 +61,8 @@ vol_frac=vol_frac_a
 
 # Normalize CC subtype fractions so they sum to 1 (preserve non-CC keys like 'ia','slsn')
 _cc_keys = [k for k in vol_frac if k not in ('ia', 'slsn')]
-_cc_sum  = sum(vol_frac[k] for k in _cc_keys)
+#_cc_sum  = sum(vol_frac[k] for k in _cc_keys)
+_cc_sum = sum(list(vol_frac[k] for k in _cc_keys))
 if _cc_sum > 0:
     vol_frac = {k: (v/_cc_sum if k in _cc_keys else v) for k, v in vol_frac.items()}
 del _cc_keys, _cc_sum
@@ -98,7 +99,7 @@ absmags_dahlen_2012 = {
     }
     
 
-absmags=absmags_dahlen_2012
+absmags=absmags_richardson_2014
 verbose = True
 
 #absmag_new = {}
@@ -224,11 +225,94 @@ def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name)
 
 
 def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, sndata_root, model_path,
-        types=['ia'],Nproc=1,extinction=True,obs_extin=True,survey=None, cadence_file=None, passband=None,
-        verbose=verbose, maglim=22., parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
+        types,passband,maglim,Nproc=1,extinction=True,obs_extin=True,survey=None,cadence_file=None,
+        verbose=verbose, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1,
         biascor=None, subtype_combination='divide_average', review = False,
         ratefile=None, eventtable=None):
+
+    '''
+    Computes the supernova rate and expected number of detections for a single
+    redshift bin by integrating the control time over the survey cadence.
+
+    Parameters
+    ----------
+    redshift2: float
+        Upper redshift bin edge
+    redshift1: float
+        Lower redshift bin edge
+    rate_guess: float
+        Initial rate guess for input redshift bin, based on cosmic SFRD; used to compute N_exp
+    number_guess: float
+        Observed number of SNe in your redshift bin from your survey
+    run_name: str
+        Name attached to your output diagnostic plots
+    base_root: str
+        Absolute path to your BoomRate directory
+    sndata_root: str
+        Absolute path to your SNANA directory
+    model_path: str
+        Absolute path to your model directory
+    types: list
+        List of SN types to compute rates for
+    passband: str
+        Path to the observed filter transmission file
+    maglim : float
+        Survey magnitude limit (sensitivity) in AB magnitudes.
+    Nproc: int, optional
+        Number of parallel processors used to run the calculation. Default is 1
+    extinction: bool, optional
+        Whether to include host galaxy extinction in the control time calculation. Default is True
+    obs_extinc: bool, optional
+        Observational extinction treatment. Default is True
+    survey: array, optional
+        Cadence array loaded from the cadence file. If provided, cadence_file is ignored. 
+        Default is None.
+    cadence_file: str, optional
+        Path to the cadence file. Used only if survey is not provided. Default is None.
+    verbose: bool, optional
+        Whether to print progress updates during the calculation.
+    parallel: bool, optional
+        Whether to run the kcor calculation in parallel. Default is True.
+    box_tc: bool, optional
+        If True, computes control times at both redshift bin edges and 
+        integrates linearly between them for a more accurate average.
+        If False, computes at the bin midpoint only. Default is True.
+    passskiprow: int, optional
+        Number of header rows to skip when reading the passband file. Default is 1.
+    passwavemult: float, optional
+        Wavelength multiplier for the passband file to convert to Angstroms. Default is 0.1.
+    dstep: float, optional
+        Step size in days for the SN age grid. Default is 0.5.
+    dmstep: float, optional
+        Step size in magnitudes for the luminosity function grid. Default is 0.1.
+    dastep: float, optional
+        Step size in magnitudes for the extinction grid. Default is 0.1.
+    biascor: str or None, optional
+        Bias correction method to apply ('flat', 'malmquist', or 'fractional'). Default is None.
+    subtype_combination: str, optional
+        Method for combining control times across subtypes. 'forward' sums
+        fractionally weighted control times; 'divide_average' averages them.
+        Default is 'divide_average'.
+    review: bool, optional
+        If True, generates diagnostic plots of the kcor and light curves. Default is False.
+    ratefile: str, optional
+        Path to the output rate text file where results are appended. Default is None.
+    eventtable: str, optional
+        Path to the SN classification table. Default is None.
+
+    Returns
+    -------
+    Nexp: float
+        Expected number of SNe detectable by the survey in this redshift bin, given the rate guess.
+    Nexp_hi: float
+        Upper 1-sigma Poisson error on Nexp (Gehrels 1986).
+    Nexp_lo: float
+        Lower 1-sigma Poisson error on Nexp (Gehrels 1986).
+    tc_tot: float
+        Total weighted control time in rest-frame years, summed across all survey visits and SN subtypes.
+    '''
+    
     rate=0.0
     N={}
     denom={}
@@ -244,6 +328,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
             survey = array([list(survey)])
         else:
             survey = get_unique_visits(survey)
+            print(survey)
+            print("")
         Dvol = volume.run(redshift2, qm=0.3, ql=0.7, ho=70)-volume.run(redshift1, qm=0.3, ql=0.7, ho=70)
         
     tc_tot=0
@@ -394,6 +480,15 @@ def poisson_error(n):
 
 
 def main(configfile=None):
+
+    '''
+    Top-level function for the BoomRate supernova rate calculator. Reads
+    configuration from a JSON file, computes probabilistic redshift
+    distributions, defines redshift bins, computes an initial rate guess,
+    and iterates over redshift bins and survey visits to compute the
+    observed supernova rate in each bin.
+    '''
+
     if not configfile:
         print("No configfile specified\n")
         return() 
@@ -430,7 +525,9 @@ def main(configfile=None):
     passwavemult = config['passwavemult']
     
     #processing 
-    outfile = config['outfile_rates']
+    #outfile = config['outfile_rates']
+    outfile_rates = config['outfile_rates']
+    outfile_numbers = config['outfile_numbers']
     multiproc = json.loads(config['multiproc'])
     
     #sample table
@@ -460,7 +557,9 @@ def main(configfile=None):
     dastep=config['extinction_step']
     box_tc=json.loads(config['box_tc'])
 
-    if not os.path.isfile(outfile) or clobber:
+    # Runs if your output file either does not exist or you are fine with replacing it
+    #if not os.path.isfile(outfile) or clobber:
+    if not os.path.isfile(outfile_rates) or clobber:
         if falseevents and os.path.isfile(falsetable):
             tmp = pickle.load(open(falsetable,'rb'))
             redshifts = tmp[:,-2]
@@ -509,6 +608,7 @@ def main(configfile=None):
                     redshift_bins = array(redshift_binning)
                 ### need a more elegant counter than this soon.
                 ng, redshifts = histogram(sne_select['Redshift'][~np.isnan(sne_select['Redshift'])], redshift_bins)
+
                 ax = subplot(111)
                 style = {'facecolor': 'none', 'edgecolor': 'C0', 'linewidth': 3}
                 ax.hist(sne_select['Redshift'][~np.isnan(sne_select['Redshift'])],
@@ -520,7 +620,7 @@ def main(configfile=None):
                 else:
                     ax.set_ylabel('Number of CCSNe')
                 ax.legend(loc=1)
-                savefig('diagnostic_plots/tmp1.png')
+                savefig('diagnostic_plots/%s_redshift_dist.png' % run_name)
                 clf()
                 
             else: #not determinate
@@ -611,14 +711,22 @@ def main(configfile=None):
         #print("pv at bins[-1] - pv at bins[0]:", pv[argmin(abs(redshift_tmp - bins[-1]))] - pv[argmin(abs(redshift_tmp - bins[0]))])
 
         # Redshift Distribution Diagnostic Plots
-        # plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name)
+        #plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name)
 
+
+        ########################################################
+        # Computing the Initial Rate Guess for each Redshift Bin 
+        ########################################################
         
         if 'ia' in sntypes:
             rg = array(snrates_Ia(med_z))## for SNe Ia, from Strolger et al. 2020
         elif (('iil' in sntypes) or ('iip' in sntypes) or ('ic' in sntypes) or ('ib' in sntypes) or ('iin' in sntypes)):
+
+            # Compute CCSN rate guess without evolving IMF
             if imf_evol is None:
-                rg = cc_snrates(array(med_z),sntypes[0])
+                rg = cc_snrates(array(med_z),sntypes[0]) # why is sn type required for this?
+
+            # Compute CCSN rate guess with Dave evolving IMF
             elif imf_evol=='dave':
                 print('Evol. k(z) testing...')
                 sfrg = rz.sfr_2020(med_z)
@@ -635,8 +743,7 @@ def main(configfile=None):
                 rg = k_z * sfrg#*vol_frac[type]
             else:
                 pdb.set_trace()
-                
-                
+                  
         elif 'slsn' in sntypes:
             if imf_evol is None:
                 #rg = cc_snrates(array(med_z),sntypes[0])
@@ -670,6 +777,8 @@ def main(configfile=None):
                 
 
         survey = loadtxt(cadence_file)
+
+        # Get the survey sensitivity (in magnitudes) from the cadence file
         if itermag:
             mags = arange(24, 31, 2)
         else:
@@ -677,12 +786,15 @@ def main(configfile=None):
                 mags = array(list(set(survey[:,2])))
             except:
                 mags = array([survey[2]])
-        numbers = []
+        #numbers = []
         ctr = 0
 
-        out_rate_file = outfile.replace('.pkl','.txt')
-        if os.path.isfile(out_rate_file): os.remove(out_rate_file)
-        f=open(out_rate_file,'a')
+        #out_rate_file = outfile.replace('.pkl','.txt')
+        #if os.path.isfile(out_rate_file): os.remove(out_rate_file)
+        # Remove the output file if it already exists
+        if os.path.isfile(outfile_rates): os.remove(outfile_rates)
+        #f=open(out_rate_file,'a')
+        f=open(outfile_rates,'a')
         f.write('#z,z_low,z_hi,R,R_+err,R_-err,N_exp,N_+err,N_-err,Nobs,tc_rest,Dvol,R_g\n')
         f.close()
         for j,mag in enumerate(mags):
@@ -692,7 +804,8 @@ def main(configfile=None):
                 print('\n\n Iteration %d of %d\n\n' %(ctr,len(mags)*(len(redshifts)-1)))
                 print('Rate guess = %2.2f' %rg[i-1])
                 num, nhi, nlo, tc = run(redshifts[i], redshifts[i-1], rg[i-1], ng[i-1],
-                                        types=sntypes, Nproc=Nproc, maglim=mag, parallel=multiproc,passband=passband,
+                                        types=sntypes, passband=passband, maglim=mag, 
+                                        Nproc=Nproc,parallel=multiproc,
                                         verbose=verbose, extinction=extinction, obs_extin=obs_extin,
                                         survey = survey,
                                         cadence_file = None,
@@ -701,7 +814,8 @@ def main(configfile=None):
                                         passwavemult=passwavemult,
                                         passskiprow=passskiprow,
                                         eventtable=eventtable,
-                                        ratefile=out_rate_file,
+                                        #ratefile=out_rate_file,
+                                        ratefile=outfile_rates,
                                         biascor=biascor,
                                         subtype_combination=subtype_combination,
                                         review = review,
@@ -710,10 +824,11 @@ def main(configfile=None):
                                         sndata_root = sndata_root,
                                         model_path = model_path
                                         )
-                numbers.append([mag, num, nhi, nlo, (redshifts[i]+redshifts[i-1])/2., redshifts[i-1], redshifts[i]])
-        numbers=array(numbers)
-        if os.path.isfile(outfile) and clobber: os.remove(outfile)
-        pickle.dump(numbers,open(outfile,'wb'))
+                #numbers.append([mag, num, nhi, nlo, (redshifts[i]+redshifts[i-1])/2., redshifts[i-1], redshifts[i]])
+        #numbers=array(numbers)
+        #if os.path.isfile(outfile) and clobber: os.remove(outfile)
+        #pickle.dump(numbers,open(outfile,'wb'))
+        #savetxt(outfile_numbers, numbers, header='mag,N_exp,N_exp_hi,N_exp_lo,z_mid,z_low,z_hi',delimiter=',')
     else:
         outdata = pickle.load(open(outfile,'rb'))
 
