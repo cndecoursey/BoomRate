@@ -171,7 +171,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path,
     ofilter_cen = get_central_wavelength(observed_filter,skip=passskiprow,wavemult=passwavemult)
     if verbose: print('observed filter effective wavelength= %4.1f nm'%ofilter_cen)
 
-    ### rest-frame lightcurve
+    # Rest-frame Lightcurve
     if 'slsn'in type:
         if verbose: print('getting best rest-frame lightcurve...')
         rest_age,rflc = rest_frame_slsn_lightcurve(dstep=dstep,verbose=verbose)
@@ -534,6 +534,33 @@ def get_central_wavelength(filter_file, skip=0, wavemult=1.):
     
     
 def read_lc_model(model,sndata_root):
+    """
+    Reads a SNANA-format .DAT light curve template file and returns the
+    filter central wavelengths, light curve data, and SN subtype.
+
+    Parameters
+    ----------
+    model: str
+        Absolute path to the .DAT template file to read.
+    sndata_root: str
+        Absolute path to the SNANA data root directory, used to resolve
+        $SNDATA_ROOT placeholders in filter paths within the .DAT file.
+
+    Returns
+    -------
+    filters: numpy.ndarray
+        1D array of effective central wavelengths in nm for each filter
+        the template has light curve data for. Length equals the number
+        of FILTER entries in the .DAT file.
+    lcdata: numpy.ndarray
+        2D array of light curve data where column 0 is the rest-frame
+        age in days and each subsequent column contains magnitudes in
+        the corresponding filter from the filters array. Shape is
+        (N_epochs, N_filters + 1).
+    type: str
+        SN subtype label as read from the SNTYPE keyword in the .DAT
+        file (e.g. 'IIP', 'IIL', 'Ib', 'Ic').
+    """
     f = open (model,'r')
     lines = f.readlines()
     f.close()
@@ -544,12 +571,10 @@ def read_lc_model(model,sndata_root):
             filter_path = line.split()[2]
             filter_path = filter_path.replace('$SNDATA_ROOT',sndata_root)
             filter_path = filter_path.replace('SDSS','SDSS/SDSS_web2001')
-            #filter_path = filter_path.replace('$SNDATA_ROOT/filters/SDSS/SDSS_web2001', base_root+'/SDSS_web2001')
-            #filter_path = filter_path.replace('$SNDATA_ROOT/filters/SDSS', base_root+'/SDSS_web2001')
-            #filter_path = filter_path.replace('$SNDATA_ROOT', base_root)
             elam=get_central_wavelength(filter_path, wavemult=0.1)
             filters.append(elam)
         if line.startswith('EPOCH'):
+            # Putting the SN rest-frame age and multi-band magnitudes at that age into a list
             c = list(map(float,line.split()[1:]))
             lcdata.append(c)
         if line.startswith('SNTYPE'):
