@@ -1,0 +1,32 @@
+{
+    "_comment": "Volumetric subtype fractions. CC-subtype values are normalized to sum to 1 at load time (ia, slsn are preserved as-is). Pick a set via the 'vol_frac_set' config key.",
+    "_options": ["li_2011", "richardson_2014", "dahlen_2012"],
+    "_default": "li_2011",
+
+    "li_2011": {
+        "_source": "Li et al. 2011",
+        "iip": 0.524,
+        "iin": 0.064,
+        "iil": 0.073,
+        "ib":  0.069,
+        "ic":  0.176,
+        "ia":  1.0,
+        "slsn": 0.00022
+    },
+    "richardson_2014": {
+        "_source": "Richardson et al. 2014",
+        "iip": 0.409,
+        "iin": 0.116,
+        "iil": 0.094,
+        "ib":  0.099,
+        "ic":  0.199
+    },
+    "dahlen_2012": {
+        "_source": "Dahlen et al. 2012",
+        "iip": 0.548,
+        "iin": 0.051,
+        "iil": 0.061,
+        "ib":  0.170,
+        "ic":  0.170
+    }
+}

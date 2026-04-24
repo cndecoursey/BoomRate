@@ -16,7 +16,7 @@ from scipy.integrate import quad
 import util as u
 import rates_z_new as rz
 import imf
-import volume, control_time
+import volume, control_time, cosmocalc
 import warnings#,exceptions
 warnings.simplefilter("error",RuntimeWarning)
 warnings.filterwarnings("ignore")
@@ -29,43 +29,8 @@ from astropy.convolution import convolve, Gaussian1DKernel
 
 
 
-vol_frac_a={ # Li et al. 2011
-    'iip': 0.524,
-    'iin': 0.064,
-    'iil': 0.073,
-    'ib' : 0.069,
-    'ic' : 0.176,
-    'ia' : 1.0,
-    'slsn':0.00022, ## for SLSNe, from Prajs et al. 2019; Not very happy with this scaling (SLSN inefficient?, or can i do imf scaling?)
-    #'fast': 1.0, # for A. Rest, 2017
-    }
-vol_frac_b={ # Richardson et al. 2014
-    'iip': 0.409,
-    'iin': 0.116,
-    'iil': 0.094,
-    'ib' : 0.099,
-    'ic' : 0.199,
-    }
-
-vol_frac_c= { ## To reproduce Dahlen et al. 2012
-    'iip': 0.548,
-    'iin': 0.051,
-    'iil': 0.061,
-    'ib' : 0.170,
-    'ic' : 0.170,
-    }
-
-    
-
-vol_frac=vol_frac_a
-
-# Normalize CC subtype fractions so they sum to 1 (preserve non-CC keys like 'ia','slsn')
-_cc_keys = [k for k in vol_frac if k not in ('ia', 'slsn')]
-#_cc_sum  = sum(vol_frac[k] for k in _cc_keys)
-_cc_sum = sum(list(vol_frac[k] for k in _cc_keys))
-if _cc_sum > 0:
-    vol_frac = {k: (v/_cc_sum if k in _cc_keys else v) for k, v in vol_frac.items()}
-del _cc_keys, _cc_sum
+# Volumetric subtype fractions are loaded by control_time from vol_fractions.json
+# (see 'vol_frac_set' in the config).
 
 absmags_li_2011 = {
     'iip': [-15.66, 1.23, 0.16],
@@ -228,8 +193,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
         types,passband,maglim,Nproc=1,extinction=True,obs_extin=True,survey=None,cadence_file=None,
         verbose=verbose, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1,
-        biascor=None, subtype_combination='divide_average', review = False,
-        ratefile=None, eventtable=None):
+        biascor=None, subtype_combination='divide_average', vol_frac_set=None,
+        cosmology=None, review = False, ratefile=None, eventtable=None):
 
     '''
     Computes the supernova rate and expected number of detections for a single
@@ -330,7 +295,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
             survey = get_unique_visits(survey)
             print(survey)
             print("")
-        Dvol = volume.run(redshift2, qm=0.3, ql=0.7, ho=70)-volume.run(redshift1, qm=0.3, ql=0.7, ho=70)
+        _cosmo = cosmocalc.resolve_cosmology(cosmology)
+        Dvol = volume.run(redshift2, **_cosmo)-volume.run(redshift1, **_cosmo)
         
     tc_tot=0
     inv_tc_tmp=0
@@ -352,7 +318,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                       type=[type], prev=prev, passband=passband,
                                       passwavemult=passwavemult, passskiprow=passskiprow,
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                      biascor=biascor, subtype_combination=subtype_combination, review=review,
+                                      biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                       verbose=verbose, plot=True,
                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path)
             else:
@@ -361,7 +327,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                       biascor=biascor, subtype_combination=subtype_combination, review=review,
+                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                        verbose=verbose,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path)
                 tc2 = control_time.run(redshift2, baseline, sens, Nproc=Nproc, parallel=parallel,
@@ -369,7 +335,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                       biascor=biascor, subtype_combination=subtype_combination, review=review,
+                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                        verbose=verbose, plot=True,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path)
                 xx =array([redshift1, redshift2])
@@ -517,6 +483,8 @@ def main(configfile=None):
         obs_extin = config['obs_extin']
     biascor = config['biascor']
     subtype_combination = config.get('subtype_combination', 'divide_average')
+    vol_frac_set = config.get('vol_frac_set', None)  # None -> use default in vol_fractions.json
+    cosmology = config.get('cosmology', None)        # None -> use default in cosmologies.json
 
     cadence_file=config['cadence_file']
     itermag = json.loads(config['itermag'])
@@ -818,6 +786,8 @@ def main(configfile=None):
                                         ratefile=outfile_rates,
                                         biascor=biascor,
                                         subtype_combination=subtype_combination,
+                                        vol_frac_set=vol_frac_set,
+                                        cosmology=cosmology,
                                         review = review,
                                         run_name = run_name,
                                         base_root = base_root,

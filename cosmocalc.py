@@ -13,6 +13,18 @@ from scipy.integrate import quad
 from math import sqrt, log10, pi
 co = 299792.458 #speed of light km/s
 
+def resolve_cosmology(cosmology):
+    """Resolve a cosmology spec into kwargs for cosmocalc.run / volume.run.
+    Accepts None (returns {} so callees use their own defaults) or a 3-element
+    iterable [H0, Om, Ol]. Returns a dict with keys 'ho', 'qm', 'ql'."""
+    if cosmology is None:
+        return {}
+    try:
+        H0, Om, Ol = cosmology
+    except (TypeError, ValueError):
+        raise ValueError("cosmology must be a 3-element [H0, Om, Ol] list; got %r" % (cosmology,))
+    return {'ho': float(H0), 'qm': float(Om), 'ql': float(Ol)}
+
 
 def main():
     import getopt

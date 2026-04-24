@@ -2,7 +2,7 @@
 #### Note: Update with Holwerda extinction
 
 
-import os,sys,pdb,scipy,pickle
+import os,sys,pdb,scipy,pickle,json
 from pylab import *
 from scipy import stats
 from scipy.optimize import curve_fit
@@ -30,41 +30,28 @@ rcParams['figure.figsize']=12,9
 rcParams['font.size']=16.0
 
 
-vol_frac_a={ # Li et al. 2011
-    'iip': 0.524,
-    'iin': 0.064,
-    'iil': 0.073,
-    'ib' : 0.069,
-    'ic' : 0.176,
-    'ia' : 1,
-    'slsn':0.0002,
-    }
-vol_frac_b={ # Richardson et al. 2014
-    'iip': 0.409,
-    'iin': 0.116,
-    'iil': 0.094,
-    'ib' : 0.099,
-    'ic' : 0.199,
-    }
-vol_frac_c= { ## To reproduce Dahlen et al. 2012
-    'iip': 0.548,
-    'iin': 0.051,
-    'iil': 0.061,
-    'ib' : 0.170,
-    'ic' : 0.170,
-    }
+# Volumetric subtype fractions live in vol_fractions.json next to this module.
+_VOL_FRAC_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'vol_fractions.json')
 
-    
+def load_vol_frac(name=None, path=None):
+    """Load a named subtype-fraction set from vol_fractions.json and
+    normalize CC-subtype values to sum to 1 ('ia','slsn' preserved as-is).
+    Keys starting with '_' (metadata) are stripped."""
+    with open(path or _VOL_FRAC_FILE) as f:
+        data = json.load(f)
+    if name is None:
+        name = data.get('_default', 'li_2011')
+    if name not in data or name.startswith('_'):
+        raise KeyError("Unknown vol_frac_set %r; options: %s"
+                       % (name, [k for k in data if not k.startswith('_')]))
+    vf = {k: v for k, v in data[name].items() if not k.startswith('_')}
+    cc_keys = [k for k in vf if k not in ('ia', 'slsn')]
+    cc_sum  = sum([vf[k] for k in cc_keys])
+    if cc_sum > 0:
+        vf = {k: (v/cc_sum if k in cc_keys else v) for k, v in vf.items()}
+    return vf
 
-vol_frac=vol_frac_a
-
-# Normalize CC subtype fractions so they sum to 1 (preserve non-CC keys like 'ia','slsn')
-_cc_keys = [k for k in vol_frac if k not in ('ia', 'slsn')]
-#_cc_sum  = sum(vol_frac[k] for k in _cc_keys)
-_cc_sum = sum(list(vol_frac[k] for k in _cc_keys))
-if _cc_sum > 0:
-    vol_frac = {k: (v/_cc_sum if k in _cc_keys else v) for k, v in vol_frac.items()}
-del _cc_keys, _cc_sum
+vol_frac = load_vol_frac()  # module-level default (li_2011)
 
 template_peak = { ##the assumed normalization for the SNANA templates
     'iip': -16.05,
@@ -141,8 +128,13 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
         plot=False, verbose=False, review=False, biascor='flat',
-        subtype_combination='divide_average'):
-    
+        subtype_combination='divide_average', vol_frac_set=None, cosmology=None):
+
+    # Resolve the subtype-fraction dict: per-call override, else module default.
+    vol_frac_local = load_vol_frac(vol_frac_set) if vol_frac_set else vol_frac
+    # Resolve cosmology: [H0, Om, Ol] from config, or {} to use module defaults.
+    cosmo = cosmocalc.resolve_cosmology(cosmology)
+
     # Define the filters; important for later
     if verbose: print('defining restframe sloan filters...')
 
@@ -314,7 +306,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path,
         clf() ; ax=subplot(111);  ax.plot(rest_age, obs_kcor[:,0], 'k-'); savefig('kcorrecton.png')
 
     ### distance modulus and time dilation
-    d, mu, peak = cosmocalc.run(redshift, qm=0.3, ql=0.7, ho=70)
+    d, mu, peak = cosmocalc.run(redshift, **cosmo)
     td = (1.+redshift)
 
     ## control times
@@ -446,10 +438,10 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path,
         ## fractional bias correction-- The relative number of each subtype one would expect in a volume
         ## Using z=0.0 observations from Li et al. 2011, already corrected for malmquist bias
         if not 'ia' in type:
-            if 'ia' in vol_frac.keys():
-                rel_num = 1.*(vol_frac[type[0]])#/(sum(list(vol_frac.values()))-vol_frac['ia'])
+            if 'ia' in vol_frac_local.keys():
+                rel_num = 1.*(vol_frac_local[type[0]])#/(sum(list(vol_frac_local.values()))-vol_frac_local['ia'])
             else:
-                rel_num = 1.*(vol_frac[type[0]])#/sum(list(vol_frac.values()))
+                rel_num = 1.*(vol_frac_local[type[0]])#/sum(list(vol_frac_local.values()))
         else:
             rel_num = 1.0
         print('... Relative number %.1f' %rel_num)
@@ -904,7 +896,7 @@ if __name__=='__main__':
     multiplier = 1.0
     all_events = 0
     area = 300.*(1./60.)**2*(pi/180.)**2*(4.0*pi)**(-1)
-    dvol = volume.run(redshift+0.2)-volume.run(redshift-0.2)
+    dvol = volume.run(redshift+0.2, **cosmo)-volume.run(redshift-0.2, **cosmo)
     
     box_tc = False
     tc_tot=0
