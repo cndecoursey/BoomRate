@@ -17,6 +17,7 @@ import util as u
 import cosmocalc
 import volume
 import glob
+from pprint import pprint
 
 import multiprocessing
 from functools import partial
@@ -123,7 +124,7 @@ color_cor_slsn={
     }
 
 
-def run(redshift, baseline, sens, base_root, sndata_root, model_path,
+def run(redshift, baseline, sens, base_root, sndata_root, model_path, run_name,
         type, dstep=3, dmstep=0.5, dastep=0.5,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
@@ -173,10 +174,22 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path,
         observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags[type[0]][0]
     elif 'ia' not in type:
         if verbose: print('getting best rest-frame lightcurve...')
+
+        # Load and interpolate non1a SED templates onto a uniform rest-frame age grid, keyed by filter central wavelength
         rest_age,rflc,models_used = rest_frame_lightcurve(type,model_path,sndata_root,dstep=dstep,verbose=verbose)
+
+        # Find the SDSS filter that most closely matches the rest-frame wavelength of your observed filter
         best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
         if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
-        observed_frame_lightcurve=mean_pop(array(rflc[best_rest_filter]))#-template_peak[type[0]]+absmags[type[0]][0]
+
+        # Note: despite the name, this is still in the rest frame at this point.
+        # The conversion to observed frame (K-correction + distance modulus) happens
+        # inside the extinction/luminosity function loop below.
+        observed_frame_lightcurve=mean_pop(mag_array=array(rflc[best_rest_filter]), rest_age=rest_age)#-template_peak[type[0]]+absmags[type[0]][0]
+        #print("Observed-Frame Light Curve")
+        #print(observed_frame_lightcurve)
+        #print("")
+
         observed_frame_lightcurve[:,0]= convolve(observed_frame_lightcurve[:,0], Gaussian1DKernel(dstep), boundary='extend') #smoothing out composite
         observed_frame_lightcurve = observed_frame_lightcurve -template_peak[type[0]]+absmags[type[0]][0]
     else:
@@ -575,31 +588,118 @@ def read_lc_model(model,sndata_root):
             
         
 def match_peak(model,model_path):
+    '''
+    Look up the peak magnitude offset for a given SN template in the SNANA calibration file. 
+    This offset is needed to anchor each template to a standard magnitude system so that 
+    light curves from different templates can be meaningfully compared and combined. 
+    Magoff is essentially used to de-redshift the observed SN templates (i.e., standardizing them)
+    '''
     modelname = os.path.basename(model).replace('.DAT','').lower()
     f = open(model_path+'/SIMGEN_INCLUDE_NON1A.INPUT')
     lines = f.readlines()
     f.close()
     magoff=0.0
+    # Iterate through SNANA config file to find input sn model (if it exists in file)
+    # If model is in SNANA config file, extract and return its magnitude offset (magoff)
+    # If model not in config file, magnitude offset (magoff) returned as 0 
     for line in lines:
         if line.startswith('NON1A:'):
             if modelname == line.split()[-1].replace('(','').replace(')','').lower():
                 magoff = float(line.split()[3])
                 break
     return(magoff)
-                            
-def mean_pop(mag_array):
-    data =[]
-    for i in range(len(mag_array[0])):
-        try:
-            avg = u.binmode(mag_array[:,i])[0]
-        except:
-            avg = average(mag_array[:,i])
 
-        sig = std(mag_array[:,i])
-        data.append([avg,1.0*sig,2.0*sig,max(mag_array[:,i]),min(mag_array[:,i])])
+def mean_pop(mag_array, mag_threshold=50,rest_age=None):
+    data =[]
+    #print('N templates:', len(mag_array))
+    medians = []
+    modes = []
+    for i in range(len(mag_array[0])):
+        mags = mag_array[:, i]
+
+        # Mask out placeholder/unphysical values before computing statistics
+        mags_clean = mags[mags < mag_threshold]
+        
+        if len(mags_clean) == 0:
+            # All templates are unphysical at this age -- SN not yet visible
+            data.append([999., 0., 0., 999., 999.])
+            modes.append(nan)
+            medians.append(nan)
+            continue
+
+        #try:
+        #    avg = u.binmode(mag_array[:,i])[0]
+        #except:
+        #    avg = average(mag_array[:,i])
+        med = median(mags_clean)
+        try:
+            mode = u.binmode(mags_clean)[0]
+        except:
+            mode = average(mags_clean)
+        modes.append(mode)
+        medians.append(med)
+        sig = std(mags_clean)
+        data.append([med,1.0*sig,2.0*sig,max(mags_clean),min(mags_clean)])
+
+    # Diagnostic plot for mode light curve vs median light curve
+    if rest_age is not None:
+        fig, ax = subplots(1, 1, figsize=(10, 10))
+
+        data_array = array(data)
+        ax.plot(rest_age, array(modes), 'r--', lw=2, label='Mode')
+        ax.plot(rest_age, array(medians), 'b:', lw=2, label='Median')
+        ax.fill_between(rest_age, data_array[:,3], data_array[:,4],
+                         alpha=0.2, color='gray', label='Min/Max range')
+        ax.fill_between(rest_age, data_array[:,0]-data_array[:,1],
+                         data_array[:,0]+data_array[:,1],
+                         alpha=0.3, color='blue', label='1-sigma')
+        ax.set_xlabel('Rest-frame age (days)')
+        ax.set_ylabel('Absolute magnitude')
+        ymin = nanmin(array(medians)[array(medians) < mag_threshold]) - 1
+        ymax = nanmax(array(medians)[array(medians) < mag_threshold]) + 1
+        ax.set_ylim(ymax, ymin-2)  # reversed order inverts the axis
+        ax.set_xlim(-50, 200)
+        ax.legend(fontsize=9)
+        ax.set_title('Representative light curve comparison')
+
+        tight_layout()
+        savefig('diagnostic_plots/mean_pop_lightcurve_diagnostic.png')
+        clf()
+
     return(array(data))
 
 def rest_frame_lightcurve(types,model_path,sndata_root,dstep=3,verbose=True):
+    """
+    Loads and interpolates the non1a SED template light curves onto a uniform
+    rest-frame age grid for a given set of SN subtypes. Templates are
+    normalized using magnitude offsets from SIMGEN_INCLUDE_NON1A.INPUT so
+    that only light curve shape information is retained, decoupled from the
+    intrinsic luminosity of each individual template.
+
+    Parameters
+    ----------
+    types: list of str
+    model_path: str
+    sndata_root: str
+    dstep: float, optional
+        Step size in days for the rest-frame age grid. Default is 3.
+    verbose: bool, optional
+
+    Returns
+    -------
+    rest_age: numpy.ndarray
+        1D array of rest-frame ages in days from -50 to 730.5 in steps of dstep.
+        This is the uniform time axis all light curves are resampled onto.
+    mag_dict: dict
+        Dictionary mapping filter central wavelengths (int, in nm) to
+        lists of light curve magnitude arrays. Each list contains one
+        array per template model that passed the type and magoff checks,
+        resampled onto rest_age and normalized by the magnitude offset.
+        mag_dict[filter] has shape (N_models, N_ages).
+    models_used : list of str
+        List of template model names (filenames without .DAT extension)
+        that were successfully loaded and included in mag_dict.
+    """
     models = glob.glob(model_path+'/*.DAT')
     rest_age = arange(-50,730.5,dstep)
     mag_dict={}
@@ -609,11 +709,19 @@ def rest_frame_lightcurve(types,model_path,sndata_root,dstep=3,verbose=True):
         magoff = match_peak(model,model_path)
         
         ## models need anchoring...
+        # Append a row at the end of mdata with your largest rest_age (e.g., 730.5) and mag=5
+        # for each filter. This prevents wild extrapolation beyond last datapoint
         append(mdata, zeros(len(mdata[0]),))
         mdata[-1][0]=rest_age[-1]; mdata[-1,1:]=5.00
 
         for cnt,filter in enumerate(filters):
-            if type.lower() in types  and magoff!=0.0: ## models with no magoff are not likely reliable
+
+            # Only process SNe whose types are in your config file type list
+            # Models with no magoff are not likely to be reliable
+            if type.lower() in types  and magoff!=0.0: 
+
+                # Interpolate this model's light curve, shifted by magoff, onto the uniform rest_age grid
+                # new_y is the light curve resampled at every age step, ready to be compared across models.
                 (junk,new_y)=u.recast(rest_age,0.,mdata[:,0],mdata[:,cnt+1]+magoff)
                 ## if average(new_y) > 30:
                 ##     ## if verbose>1:

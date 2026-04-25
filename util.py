@@ -43,8 +43,9 @@ def binmode(data,bins=None):
     
     mdx = where(m == max(m))
     mbin =0.5*(mbins[mdx[0][0]+1]+mbins[mdx[0][0]])
-    return (mbin,
-            array(zip(*vstack([m,mbins[:-1]])[::-1])))
+    #return (mbin,
+    #        array(zip(*vstack([m,mbins[:-1]])[::-1])))
+    return (mbin, array(list(zip(*vstack([m, mbins[:-1]])[::-1]))))
 
 
 def col(data, colindex):

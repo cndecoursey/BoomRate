@@ -190,7 +190,7 @@ def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name)
 
 
 def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, sndata_root, model_path,
-        types,passband,maglim,Nproc=1,extinction=True,obs_extin=True,survey=None,cadence_file=None,
+        types,passband,maglim,survey,Nproc=1,extinction=True,obs_extin=True,
         verbose=verbose, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1,
         biascor=None, subtype_combination='divide_average', vol_frac_set=None,
@@ -224,17 +224,14 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
         Path to the observed filter transmission file
     maglim : float
         Survey magnitude limit (sensitivity) in AB magnitudes.
+    survey: array
+        Cadence array loaded from the cadence file. 
     Nproc: int, optional
         Number of parallel processors used to run the calculation. Default is 1
     extinction: bool, optional
         Whether to include host galaxy extinction in the control time calculation. Default is True
     obs_extinc: bool, optional
         Observational extinction treatment. Default is True
-    survey: array, optional
-        Cadence array loaded from the cadence file. If provided, cadence_file is ignored. 
-        Default is None.
-    cadence_file: str, optional
-        Path to the cadence file. Used only if survey is not provided. Default is None.
     verbose: bool, optional
         Whether to print progress updates during the calculation.
     parallel: bool, optional
@@ -259,6 +256,12 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
         Method for combining control times across subtypes. 'forward' sums
         fractionally weighted control times; 'divide_average' averages them.
         Default is 'divide_average'.
+    vol_frac_set: str, optional
+        The key in vol_fractions.json corresponding to the volumetric subtype fraction you 
+        want to use. Default is None.
+    cosmology: list
+        List containing cosmological parameters; should be [H0, Omega_m, Omega_Lambda]
+        Default is None
     review: bool, optional
         If True, generates diagnostic plots of the kcor and light curves. Default is False.
     ratefile: str, optional
@@ -285,18 +288,16 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
     print('z=%2.2f rg=%2.2f no=%2.1f' %(redshift, rate_guess, number_guess))
     rate_guess = rate_guess*1.0e-4
 
-    if cadence_file and not survey:
-        survey = loadtxt(cadence_file)
+    if len(shape(survey))==1:
+        survey = append(survey, 1.)
+        survey = array([list(survey)])
     else:
-        if len(shape(survey))==1:
-            survey = append(survey, 1.)
-            survey = array([list(survey)])
-        else:
-            survey = get_unique_visits(survey)
-            print(survey)
-            print("")
-        _cosmo = cosmocalc.resolve_cosmology(cosmology)
-        Dvol = volume.run(redshift2, **_cosmo)-volume.run(redshift1, **_cosmo)
+        # Deduplicate the cadence entries and attaches a count of how many times each 
+        # unique visit configuration appears. This is what produces the multiplier that 
+        # gets used later in the loop.
+        survey = get_unique_visits(survey)
+    _cosmo = cosmocalc.resolve_cosmology(cosmology)
+    Dvol = volume.run(redshift2, **_cosmo)-volume.run(redshift1, **_cosmo)
         
     tc_tot=0
     inv_tc_tmp=0
@@ -320,7 +321,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                       verbose=verbose, plot=True,
-                                      base_root=base_root, sndata_root=sndata_root, model_path=model_path)
+                                      base_root=base_root, sndata_root=sndata_root, model_path=model_path, run_name=run_name)
             else:
                 tc1 = control_time.run(redshift1, baseline, sens, Nproc=Nproc, parallel=parallel,
                                        extinction=extinction, obs_extin=obs_extin,
@@ -329,7 +330,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                        verbose=verbose,
-                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path)
+                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, run_name=run_name)
                 tc2 = control_time.run(redshift2, baseline, sens, Nproc=Nproc, parallel=parallel,
                                        extinction=extinction, obs_extin=obs_extin,
                                        type=[type], prev=prev,passband=passband,
@@ -337,7 +338,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                        verbose=verbose, plot=True,
-                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path)
+                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, run_name=run_name)
                 xx =array([redshift1, redshift2])
                 yy = array([tc1,tc2])
                 yy[isnan(yy)]=0.0 ## remove any nans
@@ -776,7 +777,6 @@ def main(configfile=None):
                                         Nproc=Nproc,parallel=multiproc,
                                         verbose=verbose, extinction=extinction, obs_extin=obs_extin,
                                         survey = survey,
-                                        cadence_file = None,
                                         box_tc=box_tc,
                                         dstep=dstep, dmstep=dmstep, dastep=dastep,
                                         passwavemult=passwavemult,

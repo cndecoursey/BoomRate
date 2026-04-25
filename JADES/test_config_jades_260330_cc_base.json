@@ -5,7 +5,7 @@
     "model_path": "/Users/christadecoursey/Documents/JADES/SN_Classification_and_Rates_Paper/classification/BoomRate/templates/non1a",
 
     "_comment" : "This is just a test of the number of events expected",
-    "review" : "false",
+    "review" : "true",
     "verbose" :  "true",
     "multiproc" : "true",
     "clobber" : "true",
@@ -21,6 +21,13 @@
     "passband" : "./JWST_filters/F277W.txt",
     "passskiprow" : 1,
     "passwavemult" : 1000,
+
+    "_vol_frac_set_options" : "li_2011 | richardson_2014 | dahlen_2012",
+    "vol_frac_set" : "li_2011",
+    "_cosmology_comment" : "[H0 (km/s/Mpc), Omega_m, Omega_Lambda]",
+    "cosmology" : [70, 0.3, 0.7],
+    "_subtype_combination_options" : "forward | divide_average",
+    "subtype_combination" : "forward",
     
     "itermag" : "false",
     "eventtable": "./JADES/JADES_SN_Classifications_base_F277W.txt",
