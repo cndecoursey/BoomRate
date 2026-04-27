@@ -189,6 +189,46 @@ def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name)
     clf()
 
 
+def plot_tc_per_type(tc_per_type, z_low, z_high, method, run_name, mag=None):
+    """Per-z-bin diagnostic: stacked single bar showing each subtype's
+    contribution to tc_tot under the active subtype-combination method,
+    after weighing and summation. Total height = tc_tot for this bin."""
+    if not tc_per_type:
+        return
+    types = list(tc_per_type.keys())
+    contributions = array([tc_per_type[t] for t in types]) * 365.25  # rest-frame days
+    total = contributions.sum()
+    palette = cm.tab10(linspace(0, 1, max(len(types), 3)))
+
+    fig, ax = subplots(figsize=(5, 6))
+    bottom = 0.0
+    for t_idx, t in enumerate(types):
+        h = contributions[t_idx]
+        ax.bar(0, h, 0.6, bottom=bottom,
+               color=palette[t_idx % len(palette)], edgecolor='white', linewidth=0.5,
+               label='%s  %.2f d' % (t.upper(), h))
+        bottom += h
+
+    ax.set_xticks([0])
+    ax.set_xticklabels(['z=%.2f-%.2f' % (z_low, z_high)])
+    ax.set_ylabel('Control time (rest-frame days)')
+    title = 'tc_tot = %.2f d  (%s)' % (total, method)
+    if mag is not None:
+        title += '  | maglim %.1f' % mag
+    ax.set_title(title)
+    ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5),
+              title='Subtype contribution', frameon=False)
+    ax.margins(x=0.4)
+    tight_layout()
+
+    if not os.path.isdir('diagnostic_plots'):
+        os.makedirs('diagnostic_plots')
+    savefig('diagnostic_plots/%s_tc_per_type_z%.2f-%.2f.png' % (run_name, z_low, z_high),
+            bbox_inches='tight')
+    clf()
+    close('all')
+
+
 def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, sndata_root, model_path,
         types,passband,maglim,survey,Nproc=1,extinction=True,obs_extin=True,
         verbose=verbose, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
@@ -298,7 +338,10 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
         survey = get_unique_visits(survey)
     _cosmo = cosmocalc.resolve_cosmology(cosmology)
     Dvol = volume.run(redshift2, **_cosmo)-volume.run(redshift1, **_cosmo)
-        
+
+    # Diagnostic: per-subtype contribution to tc_tot under the active method.
+    tc_per_type = {t: 0.0 for t in types}
+
     tc_tot=0
     inv_tc_tmp=0
     tc_tmp=[]
@@ -363,12 +406,13 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
             if verbose: print('%d %s %2.1f' %(i,type, N[type]))
             tc_tot += tc*multiplier
             tc_tmp.append(tc*multiplier)
+            tc_per_type[type] += tc * multiplier
         print("iteration %d %2.2f %s" %(i, sum(list(N.values())), ', '.join(list(map(str,item)))))
         print("\n")
 
     print('-------\n')
     if subtype_combination == 'forward':
-        # physically correct: control_time returned f_X * T_raw_X per subtype;
+        #  control_time returned f_X * T_raw_X per subtype;
         # sum across subtypes, no /N_types averaging
         Nexp = sum(list(N.values()))
         # tc_tot already holds sum_X (f_X * T_raw_X) summed over survey rows
@@ -377,6 +421,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
         # average across subtypes
         Nexp = sum(list(N.values())) / len(types)
         tc_tot = tc_tot / len(types)
+        for t in tc_per_type:
+            tc_per_type[t] /= len(types)
 
     ## pdb.set_trace()
     
@@ -415,6 +461,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
               area_frac*Dvol*1e-4, rate_guess*1e4)
             )
     f,close()
+    plot_tc_per_type(tc_per_type, redshift1, redshift2, subtype_combination,
+                     run_name, mag=sens)
     return([Nexp, Nexp_hi, Nexp_lo, tc_tot])
 
 def poisson_error(n):
@@ -773,7 +821,7 @@ def main(configfile=None):
                 print('\n\n Iteration %d of %d\n\n' %(ctr,len(mags)*(len(redshifts)-1)))
                 print('Rate guess = %2.2f' %rg[i-1])
                 num, nhi, nlo, tc = run(redshifts[i], redshifts[i-1], rg[i-1], ng[i-1],
-                                        types=sntypes, passband=passband, maglim=mag, 
+                                        types=sntypes, passband=passband, maglim=mag,
                                         Nproc=Nproc,parallel=multiproc,
                                         verbose=verbose, extinction=extinction, obs_extin=obs_extin,
                                         survey = survey,
