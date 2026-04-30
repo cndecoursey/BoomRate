@@ -35,9 +35,6 @@ rcParams['font.size']=16.0
 _VOL_FRAC_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'vol_fractions.json')
 
 def load_vol_frac(name=None, path=None):
-    """Load a named subtype-fraction set from vol_fractions.json and
-    normalize CC-subtype values to sum to 1 ('ia','slsn' preserved as-is).
-    Keys starting with '_' (metadata) are stripped."""
     with open(path or _VOL_FRAC_FILE) as f:
         data = json.load(f)
     if name is None:
@@ -202,16 +199,17 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
 
         observed_frame_lightcurve_unanchored = observed_frame_lightcurve.copy()
         #lc_normalized_to_0 = observed_frame_lightcurve - template_peak[type[0]]
-        lc_normalized_to_0 = observed_frame_lightcurve - min(observed_frame_lightcurve[:,0])
+        lc_normalized_to_0 = observed_frame_lightcurve - nanmin(observed_frame_lightcurve[:,0])
         #observed_frame_lightcurve = observed_frame_lightcurve -template_peak[type[0]]+absmags[type[0]][0]
 
         # Anchor composite light curve to your choice of mean peak absolute magnitude by shifting its 
         # brightest point to absmags[type[0]][0]
-        observed_frame_lightcurve = observed_frame_lightcurve - min(observed_frame_lightcurve[:,0]) + absmags[type[0]][0]
+        observed_frame_lightcurve = observed_frame_lightcurve - nanmin(observed_frame_lightcurve[:,0]) + absmags[type[0]][0]
 
         if review:
             plot_anchoring_diagnostic(observed_frame_lightcurve_unanchored, lc_normalized_to_0, observed_frame_lightcurve,
                                       rest_age, type[0], diag_dir, absmags_richardson_2014)
+
     else:
         if verbose: print('getting best rest-frame lightcurve SNIA ...')
         rest_age, rflc = rest_frame_Ia_lightcurve(dstep=dstep,verbose=verbose)
