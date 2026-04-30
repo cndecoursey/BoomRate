@@ -127,7 +127,7 @@ def fline(x,*p):
     m,b = p
     return m*x+b
 
-def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name):
+def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, diag_dir):
     """
     Plots the smoothed redshift probability distribution and cumulative distribution
     with redshift bin boundaries and observed SN counts per bin.
@@ -185,11 +185,11 @@ def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name)
     ax2.legend(loc=2, fontsize=9)
 
     tight_layout()
-    savefig('diagnostic_plots/%s_redshift_dist.png' %run_name)
+    savefig('%s/redshift_dist.png' % diag_dir)
     clf()
 
 
-def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, sndata_root, model_path,
+def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, sndata_root, model_path,
         types,passband,maglim,survey,Nproc=1,extinction=True,obs_extin=True,
         verbose=verbose, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1,
@@ -321,7 +321,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                       verbose=verbose, plot=True,
-                                      base_root=base_root, sndata_root=sndata_root, model_path=model_path, run_name=run_name)
+                                      base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
             else:
                 tc1 = control_time.run(redshift1, baseline, sens, Nproc=Nproc, parallel=parallel,
                                        extinction=extinction, obs_extin=obs_extin,
@@ -330,7 +330,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                        verbose=verbose,
-                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, run_name=run_name)
+                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
                 tc2 = control_time.run(redshift2, baseline, sens, Nproc=Nproc, parallel=parallel,
                                        extinction=extinction, obs_extin=obs_extin,
                                        type=[type], prev=prev,passband=passband,
@@ -338,7 +338,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                        verbose=verbose, plot=True,
-                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, run_name=run_name)
+                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
+                
                 xx =array([redshift1, redshift2])
                 yy = array([tc1,tc2])
                 yy[isnan(yy)]=0.0 ## remove any nans
@@ -417,6 +418,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, run_name, base_root, snd
     f,close()
     return([Nexp, Nexp_hi, Nexp_lo, tc_tot])
 
+    
 def poisson_error(n):
     #from table in Gehrels (1986), where CL are determined from Newton's method solution.
     if type(n) is not ndarray:
@@ -525,6 +527,14 @@ def main(configfile=None):
     dmstep=config['abs_mag_step']
     dastep=config['extinction_step']
     box_tc=json.loads(config['box_tc'])
+
+    # If review is True, generate a directory for this run within diagnostic plots
+    if review:
+        diag_dir = 'diagnostic_plots/%s' % run_name
+        if not os.path.isdir(diag_dir):
+            os.makedirs(diag_dir)
+    else:
+        diag_dir=None
 
     # Runs if your output file either does not exist or you are fine with replacing it
     #if not os.path.isfile(outfile) or clobber:
@@ -680,7 +690,8 @@ def main(configfile=None):
         #print("pv at bins[-1] - pv at bins[0]:", pv[argmin(abs(redshift_tmp - bins[-1]))] - pv[argmin(abs(redshift_tmp - bins[0]))])
 
         # Redshift Distribution Diagnostic Plots
-        #plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, run_name)
+        if review:
+            plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, diag_dir)
 
 
         ########################################################
@@ -789,7 +800,7 @@ def main(configfile=None):
                                         vol_frac_set=vol_frac_set,
                                         cosmology=cosmology,
                                         review = review,
-                                        run_name = run_name,
+                                        diag_dir = diag_dir,
                                         base_root = base_root,
                                         sndata_root = sndata_root,
                                         model_path = model_path

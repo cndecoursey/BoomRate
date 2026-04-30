@@ -124,7 +124,7 @@ color_cor_slsn={
     }
 
 
-def run(redshift, baseline, sens, base_root, sndata_root, model_path, run_name,
+def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         type, dstep=3, dmstep=0.5, dastep=0.5,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
@@ -185,13 +185,33 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, run_name,
         # Note: despite the name, this is still in the rest frame at this point.
         # The conversion to observed frame (K-correction + distance modulus) happens
         # inside the extinction/luminosity function loop below.
-        observed_frame_lightcurve=mean_pop(mag_array=array(rflc[best_rest_filter]), rest_age=rest_age)#-template_peak[type[0]]+absmags[type[0]][0]
-        #print("Observed-Frame Light Curve")
-        #print(observed_frame_lightcurve)
-        #print("")
+        observed_frame_lightcurve=mean_pop(mag_array=array(rflc[best_rest_filter]), review=review, 
+                                           diag_dir=diag_dir, rest_age=rest_age, type=type[0])#-template_peak[type[0]]+absmags[type[0]][0]
+        observed_frame_lightcurve_unsmoothed = observed_frame_lightcurve.copy()
 
-        observed_frame_lightcurve[:,0]= convolve(observed_frame_lightcurve[:,0], Gaussian1DKernel(dstep), boundary='extend') #smoothing out composite
-        observed_frame_lightcurve = observed_frame_lightcurve -template_peak[type[0]]+absmags[type[0]][0]
+        # Smooth the representative light curve along the age axis using a Gaussian kernel. 
+        # Gaussian1DKernel(dstep) creates a Gaussian with a standard deviation of dstep age steps 
+        # So with dstep=5, it smooths over a scale of 5 age steps × 5 days/step = 25 days.
+        observed_frame_lightcurve[:,0]= convolve(observed_frame_lightcurve[:,0], Gaussian1DKernel(dstep), boundary='extend') 
+
+        # Plot the representative light curve before/after smoothing to ensure smoothing is reasonable
+        if review:
+            plot_smoothing_diagnostic(observed_frame_lightcurve_unsmoothed=observed_frame_lightcurve_unsmoothed, 
+                                      observed_frame_lightcurve_smoothed=observed_frame_lightcurve, 
+                                      rest_age=rest_age, type=type[0], diag_dir=diag_dir, dstep=dstep)
+
+        observed_frame_lightcurve_unanchored = observed_frame_lightcurve.copy()
+        #lc_normalized_to_0 = observed_frame_lightcurve - template_peak[type[0]]
+        lc_normalized_to_0 = observed_frame_lightcurve - min(observed_frame_lightcurve[:,0])
+        #observed_frame_lightcurve = observed_frame_lightcurve -template_peak[type[0]]+absmags[type[0]][0]
+
+        # Anchor composite light curve to your choice of mean peak absolute magnitude by shifting its 
+        # brightest point to absmags[type[0]][0]
+        observed_frame_lightcurve = observed_frame_lightcurve - min(observed_frame_lightcurve[:,0]) + absmags[type[0]][0]
+
+        if review:
+            plot_anchoring_diagnostic(observed_frame_lightcurve_unanchored, lc_normalized_to_0, observed_frame_lightcurve,
+                                      rest_age, type[0], diag_dir, absmags_richardson_2014)
     else:
         if verbose: print('getting best rest-frame lightcurve SNIA ...')
         rest_age, rflc = rest_frame_Ia_lightcurve(dstep=dstep,verbose=verbose)
@@ -200,6 +220,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, run_name,
         observed_frame_lightcurve = zeros((len(array(rflc[best_rest_filter])),5))
         observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags[type[0]][0]
         
+    
     ### kcorrecting rest lightcurve
     if verbose: print('kcorrecting rest-frame lightcurve...')
 
@@ -225,11 +246,18 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, run_name,
                     pdb.set_trace()
             else:
                 data = loadtxt(os.path.join(model_path,model+'.dat'))
+
+            #Extract the unique ages present in this model's SED data (column 0 is age) 
+            # and stores the full SED array in models_used_dict keyed by model name.
             ages = list(set(data[:,0]))
             models_used_dict[model]=data
+
+            # Accumulate all unique ages across all models into total_age_set. This is used later
+            # to ensure the K-correction is computed at every age that any model has data for.
             for age in ages:
                 if age not in total_age_set:
                     total_age_set.append(age)
+
         pickle.dump(models_used_dict,pkl_file)
         pkl_file.close()
     else:
@@ -244,19 +272,45 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, run_name,
                 if age not in total_age_set:
                     total_age_set.append(age)
 
-    ## if review:
-    ##     for k,v in rflc.items():
-    ##         clf()
-    ##         ax = subplot(111)
-    ##         v=array(v)
-    ##         for ii in range(len(v)):
-    ##             ax.plot(rest_age, v[ii], label='%s'%models_used[ii])
-    ##         ax.set_ylim(-10,-20)
-    ##         ax.set_title('Filter = %d' %k)
-    ##         ax.legend()
-    ##         show()
-    ##     pdb.set_trace()
+    #if review:
+    #    for k,v in rflc.items():
+    #        clf()
+    #        ax = subplot(111)
+    #        v=array(v)
+    #        for ii in range(len(v)):
+    #            ax.plot(rest_age, v[ii], label='%s'%models_used[ii])
+    #        ax.set_ylim(-10,-20)
+    #        ax.set_title('Filter = %d' %k)
+    #        ax.legend()
+    #        show()
+    #    pdb.set_trace()
 
+    if review:
+        for k, v in rflc.items():
+            clf()
+            fig, ax = subplots(1, 1, figsize=(12, 7))
+            v = array(v)
+            colors = [cm.viridis(i/max(len(v)-1, 1)) for i in range(len(v))]
+            for ii in range(len(v)):
+                ax.plot(rest_age, v[ii], color=colors[ii], lw=1.0, alpha=0.7,
+                        label='%s' % models_used[ii])
+            ax.set_xlim(-50, 200)
+            # set y limits based on physically meaningful values
+            physical = v[v < 50.]
+            if len(physical) > 0:
+                ax.set_ylim(nanmax(physical)+2, nanmin(physical)-2)
+            else:
+                ax.set_ylim(-10, -20)
+            ax.set_xlabel('Rest-frame age (days)')
+            ax.set_ylabel('Absolute magnitude')
+            ax.set_title('%s individual template light curves, filter = %d nm' % ('_'.join(type), k))
+            ax.legend(fontsize=10, ncol=2, loc='lower right',
+                      framealpha=0.5, bbox_to_anchor=(1.0, 0.0))
+            tight_layout()
+            savefig('%s/%s_%dnm_individual_templates.png' % (diag_dir, '_'.join(type), k))
+            clf()
+
+    
     f1 = loadtxt(observed_filter,skiprows=passskiprow)
     f1[:,0]=f1[:,0]*passwavemult*10.
     
@@ -515,7 +569,111 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, run_name,
         tight_layout()
         savefig('lightcurves.png')
     return(tot_ctrl/365.25)
+    
 
+def plot_anchoring_diagnostic(lc_smoothed, lc_normalized, lc_anchored, rest_age, type, diag_dir, absmags):
+    """
+    Plots the representative light curve at three stages of the anchoring
+    process: after smoothing, after normalization to peak=0, and after
+    anchoring to the Richardson 2014 mean peak absolute magnitude.
+
+    Parameters
+    ----------
+    lc_smoothed: numpy.ndarray
+        2D array of shape (N_ages, 5) after Gaussian smoothing but before
+        any magnitude anchoring.
+    lc_normalized: numpy.ndarray
+        2D array of shape (N_ages, 5) after subtracting template_peak,
+        so that the peak magnitude is at 0.0.
+    lc_anchored: numpy.ndarray
+        2D array of shape (N_ages, 5) after adding absmags[type][0],
+        anchored to the Richardson 2014 mean peak absolute magnitude.
+    rest_age : numpy.ndarray
+        1D array of rest-frame ages in days.
+    type : str
+        SN subtype label used for plot title and filename (e.g. 'iip').
+    run_name : str
+        Name of the current run, used for output filename.
+    absmags : dict
+        Dictionary of mean peak absolute magnitudes from Richardson 2014,
+        keyed by SN subtype.
+    """
+    fig, ax = subplots(1, 1, figsize=(10, 14))
+
+    # plot all three light curves, column 0 only
+    ax.plot(rest_age, lc_smoothed[:,0], 'b-', lw=1.5, alpha=0.7,
+            label='Before anchoring')
+    ax.plot(rest_age, lc_normalized[:,0], 'g-', lw=1.5, alpha=0.7,
+            label='Normalized to peak = 0.0 mag')
+    ax.plot(rest_age, lc_anchored[:,0], 'r-', lw=2,
+            label='Anchored to Richardson 2014 peak = %.2f mag' % absmags[type][0])
+
+    # reference lines
+    ax.axhline(0.0, color='gray', ls=':', lw=1, alpha=0.5, label='0.0 mag reference')
+    ax.axhline(absmags[type][0], color='red', ls=':', lw=1, alpha=0.5,
+               label='Richardson 2014 peak = %.2f mag' % absmags[type][0])
+
+    ax.set_xlabel('Rest-frame age (days)')
+    ax.set_ylabel('Absolute magnitude')
+    ax.set_xlim(-50, 200)
+
+    # set y limits to accommodate all three light curves including peak=0
+    all_physical = concatenate([
+        lc_smoothed[:,0][lc_smoothed[:,0] < 50.],
+        lc_normalized[:,0][lc_normalized[:,0] < 50.],
+        lc_anchored[:,0][lc_anchored[:,0] < 50.]
+    ])
+    if len(all_physical) > 0:
+        ax.set_ylim(nanmax(all_physical)+2, nanmin(all_physical)-2)
+
+    ax.legend(fontsize=9)
+    ax.set_title('%s light curve anchoring diagnostic' % type)
+    tight_layout()
+    savefig('%s/%s_anchoring_diagnostic.png' % (diag_dir, type))
+    clf()
+
+def plot_smoothing_diagnostic(observed_frame_lightcurve_unsmoothed, observed_frame_lightcurve_smoothed, rest_age, type, diag_dir, dstep):
+    """
+    Plots the representative light curve before and after Gaussian smoothing
+
+    Parameters
+    ----------
+    observed_frame_lightcurve_unsmoothed: numpy.ndarray
+        2D array of shape (N_ages, 5) before smoothing is applied.
+    observed_frame_lightcurve_smoothed: numpy.ndarray
+        2D array of shape (N_ages, 5) after smoothing is applied.
+    rest_age: numpy.ndarray
+        1D array of rest-frame ages in days.
+    type: str
+        SN subtype label used for plot title and filename.
+    run_name: str
+        Name of the current run, used for output filename.
+    dstep: float
+        Step size in days, used as the Gaussian kernel standard deviation.
+    """
+    fig, ax = subplots(1, 1, figsize=(10, 7))
+
+    ax.plot(rest_age, observed_frame_lightcurve_unsmoothed[:,0], 
+            'b-', lw=1.5, alpha=0.7, label='Before smoothing')
+    ax.plot(rest_age, observed_frame_lightcurve_smoothed[:,0],
+            'r-', lw=2, label='After smoothing (Gaussian, sigma=%d days)' %(dstep*dstep))
+
+    ax.set_xlabel('Rest-frame age (days)')
+    ax.set_ylabel('Absolute magnitude')
+    ax.set_xlim(-50, 200)
+
+    # Set y limits based on physically meaningful values
+    physical = observed_frame_lightcurve_unsmoothed[:,0]
+    physical = physical[physical < 50.]
+    if len(physical) > 0:
+        ax.set_ylim(nanmax(physical)+2, nanmin(physical)-2)
+
+    ax.legend(fontsize=9)
+    ax.set_title('%s light curve: before vs after Gaussian smoothing' % type)
+    tight_layout()
+    savefig('%s/%s_smoothing_diagnostic.png' % (diag_dir, type))
+    clf()
+    
 
 def det_eff(delta_mag,mc=25.8, T=1.0, S=0.4):
     result=T/(1+exp((delta_mag-mc)/S))
@@ -609,10 +767,39 @@ def match_peak(model,model_path):
                 break
     return(magoff)
 
-def mean_pop(mag_array, mag_threshold=50,rest_age=None):
+def mean_pop(mag_array, mag_threshold=50, review=False, rest_age=None, type=None, diag_dir=None):
+    """
+    Computes representative population statistics across a set of SN template
+    light curves at each rest-frame age step. Uses the median as the
+    representative magnitude at each age, which is robust to the highly skewed
+    distributions that arise from pre-explosion baseline values in the templates
+    at early ages. Values above mag_threshold are excluded before computing
+    statistics to avoid contamination from unphysical placeholder values.
+
+    Parameters
+    ----------
+    mag_array: numpy.ndarray
+        2D array of shape (N_models, N_ages) containing template light curve magnitudes for
+        the best matching rest-frame filter, resampled onto the uniform rest_age grid. 
+    mag_threshold: float, optional
+        Maximum magnitude value to include in statistics. Values above this
+        threshold are excluded as unphysical placeholders. Default is 50.
+
+    Returns
+    -------
+    data: numpy.ndarray
+        2D array of shape (N_ages, 5) containing population statistics at
+        each rest-frame age step. The columns are:
+        - Column 0: median magnitude across templates (representative value
+          used in the control time calculation)
+        - Column 1: 1-sigma standard deviation across templates
+        - Column 2: 2-sigma standard deviation across templates
+        - Column 3: maximum magnitude (faintest template) at this age
+        - Column 4: minimum magnitude (brightest template) at this age
+        Age steps where all templates exceed mag_threshold are assigned
+        values of [999., 0., 0., 999., 999.] to flag them as undetectable.
+    """
     data =[]
-    #print('N templates:', len(mag_array))
-    medians = []
     modes = []
     for i in range(len(mag_array[0])):
         mags = mag_array[:, i]
@@ -624,46 +811,40 @@ def mean_pop(mag_array, mag_threshold=50,rest_age=None):
             # All templates are unphysical at this age -- SN not yet visible
             data.append([999., 0., 0., 999., 999.])
             modes.append(nan)
-            medians.append(nan)
             continue
 
-        #try:
-        #    avg = u.binmode(mag_array[:,i])[0]
-        #except:
-        #    avg = average(mag_array[:,i])
         med = median(mags_clean)
         try:
             mode = u.binmode(mags_clean)[0]
         except:
             mode = average(mags_clean)
         modes.append(mode)
-        medians.append(med)
         sig = std(mags_clean)
         data.append([med,1.0*sig,2.0*sig,max(mags_clean),min(mags_clean)])
 
     # Diagnostic plot for mode light curve vs median light curve
-    if rest_age is not None:
+    if review:
         fig, ax = subplots(1, 1, figsize=(10, 10))
 
         data_array = array(data)
         ax.plot(rest_age, array(modes), 'r--', lw=2, label='Mode')
-        ax.plot(rest_age, array(medians), 'b:', lw=2, label='Median')
-        ax.fill_between(rest_age, data_array[:,3], data_array[:,4],
+        ax.plot(rest_age, data_array[:,0], 'b:', lw=2, label='Median')
+        ax.fill_between(x=rest_age, y1=data_array[:,4], y2=data_array[:,3],
                          alpha=0.2, color='gray', label='Min/Max range')
         ax.fill_between(rest_age, data_array[:,0]-data_array[:,1],
                          data_array[:,0]+data_array[:,1],
                          alpha=0.3, color='blue', label='1-sigma')
         ax.set_xlabel('Rest-frame age (days)')
         ax.set_ylabel('Absolute magnitude')
-        ymin = nanmin(array(medians)[array(medians) < mag_threshold]) - 1
-        ymax = nanmax(array(medians)[array(medians) < mag_threshold]) + 1
+        ymin = nanmin(data_array[:,0][data_array[:,0] < mag_threshold]) - 1
+        ymax = nanmax(data_array[:,0][data_array[:,0] < mag_threshold]) + 1
         ax.set_ylim(ymax, ymin-2)  # reversed order inverts the axis
         ax.set_xlim(-50, 200)
         ax.legend(fontsize=9)
-        ax.set_title('Representative light curve comparison')
+        ax.set_title('%s representative light curve comparison' % type)
 
         tight_layout()
-        savefig('diagnostic_plots/mean_pop_lightcurve_diagnostic.png')
+        savefig('%s/%s_mean_pop_lightcurve_diagnostic.png' % (diag_dir, type))
         clf()
 
     return(array(data))
