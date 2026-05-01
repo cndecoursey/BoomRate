@@ -59,6 +59,10 @@ def main():
     #return(z,d,mu,peak)
 
 def run(redshift, qm=0.27, ql=0.73, ho=71):
+    # Numerically integrate func from z=0 to the target redshift:
+    # integral = integral_0^z [ dz' / E(z') ]
+    # This is the dimensionless comoving distance, sometimes written as D_C / D_H 
+    # where D_H = c/H_0 is the Hubble distance.
     integral = quad(func,0.0,redshift, args=(qm, ql))[0]
     (d,mu,peak)=luminosity_distance(redshift,qm,ql,ho, integral)
     return(d,mu,peak)
@@ -66,6 +70,11 @@ def run(redshift, qm=0.27, ql=0.73, ho=71):
 def func(z,qm, ql):
     ## this is the function that describes the integral
     ## in the cosmological luminosity density fomula
+    # This is the integrand of the comoving distance integral, 
+    # which comes from the Friedmann equation for a flat ΛCDM universe. 
+    # The full expression inside the square root is the dimensionless Hubble parameter squared, E(z)^2:
+    # E(z)^2 = (1+z)^2*(1+qm*z) - z*(2+z)*ql
+    # func returns 1/E(z) — the reciprocal of the dimensionless Hubble parameter at redshift z
     out = (sqrt((1+z)**2*(1+qm*z)-z*(2+z)*ql))**(-1.)
     return (out)
 

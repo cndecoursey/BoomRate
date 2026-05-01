@@ -99,6 +99,7 @@ absmags=absmags_richardson_2014
 #for key in absmags.keys(): absmag_new[key]=[absmags[key][0]-absmags[key][2],absmags[key][1],absmags[key][2]]
 #absmags=absmag_new
 
+# For color_cor_Ia, the reference filter is 551 nm (Bessell V-band)
 color_cor_Ia={
     360:1.8,
     442:0.15,
@@ -107,6 +108,7 @@ color_cor_Ia={
     806:-0.56
     }
 
+# For color_cor_gen (CCSNe), the reference filter is unclear?
 color_cor_gen={
     356:2.7,
     472:0.15,
@@ -122,7 +124,7 @@ color_cor_slsn={
 
 
 def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
-        type, dstep=3, dmstep=0.5, dastep=0.5,
+        type, dstep=3, dmstep=0.5, dastep=0.5, lc_smoothing_window=3,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
         plot=False, verbose=False, review=False, biascor='flat',
@@ -175,6 +177,11 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         # Load and interpolate non1a SED templates onto a uniform rest-frame age grid, keyed by filter central wavelength
         rest_age,rflc,models_used = rest_frame_lightcurve(type,model_path,sndata_root,dstep=dstep,verbose=verbose)
 
+        # Plot the full restframe lightcurves for each model in used_models, for each available restframe filter
+        if review:
+            plot_restframe_lightcurves(rflc=rflc, rest_age=rest_age, models_used=models_used, type=type[0],
+                                       diag_dir=diag_dir)
+
         # Find the SDSS filter that most closely matches the rest-frame wavelength of your observed filter
         best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
         if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
@@ -189,7 +196,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         # Smooth the representative light curve along the age axis using a Gaussian kernel. 
         # Gaussian1DKernel(dstep) creates a Gaussian with a standard deviation of dstep age steps 
         # So with dstep=5, it smooths over a scale of 5 age steps × 5 days/step = 25 days.
-        observed_frame_lightcurve[:,0]= convolve(observed_frame_lightcurve[:,0], Gaussian1DKernel(dstep), boundary='extend') 
+        observed_frame_lightcurve[:,0]= convolve(observed_frame_lightcurve[:,0], Gaussian1DKernel(lc_smoothing_window), boundary='extend') 
 
         # Plot the representative light curve before/after smoothing to ensure smoothing is reasonable
         if review:
@@ -217,7 +224,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
         observed_frame_lightcurve = zeros((len(array(rflc[best_rest_filter])),5))
         observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags[type[0]][0]
-        
+
     
     ### kcorrecting rest lightcurve
     if verbose: print('kcorrecting rest-frame lightcurve...')
@@ -269,58 +276,27 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
             for age in ages:
                 if age not in total_age_set:
                     total_age_set.append(age)
-
-    #if review:
-    #    for k,v in rflc.items():
-    #        clf()
-    #        ax = subplot(111)
-    #        v=array(v)
-    #        for ii in range(len(v)):
-    #            ax.plot(rest_age, v[ii], label='%s'%models_used[ii])
-    #        ax.set_ylim(-10,-20)
-    #        ax.set_title('Filter = %d' %k)
-    #        ax.legend()
-    #        show()
-    #    pdb.set_trace()
-
-    if review:
-        for k, v in rflc.items():
-            clf()
-            fig, ax = subplots(1, 1, figsize=(12, 7))
-            v = array(v)
-            colors = [cm.viridis(i/max(len(v)-1, 1)) for i in range(len(v))]
-            for ii in range(len(v)):
-                ax.plot(rest_age, v[ii], color=colors[ii], lw=1.0, alpha=0.7,
-                        label='%s' % models_used[ii])
-            ax.set_xlim(-50, 200)
-            # set y limits based on physically meaningful values
-            physical = v[v < 50.]
-            if len(physical) > 0:
-                ax.set_ylim(nanmax(physical)+2, nanmin(physical)-2)
-            else:
-                ax.set_ylim(-10, -20)
-            ax.set_xlabel('Rest-frame age (days)')
-            ax.set_ylabel('Absolute magnitude')
-            ax.set_title('%s individual template light curves, filter = %d nm' % ('_'.join(type), k))
-            ax.legend(fontsize=10, ncol=2, loc='lower right',
-                      framealpha=0.5, bbox_to_anchor=(1.0, 0.0))
-            tight_layout()
-            savefig('%s/%s_%dnm_individual_templates.png' % (diag_dir, '_'.join(type), k))
-            clf()
-
     
+    # Read in your observed filter transmission curve
     f1 = loadtxt(observed_filter,skiprows=passskiprow)
+    # Convert filter transmission curve wavelength to Angstrom (since k-correction works in Angstrom)
     f1[:,0]=f1[:,0]*passwavemult*10.
     
+    # Read in your closest-matching rest-frame wavelength filter transmission curve
     f2 = loadtxt(filter_dict[best_rest_filter])
+
+    # Select the appropriate color correction dictionary based on SN type
     if 'ia' in type:
         color_cor = color_cor_Ia
     elif 'slsn' in type:
         color_cor = color_cor_slsn
     else:
         color_cor = color_cor_gen
-    ccnl =  min(color_cor.keys(), key=lambda x:abs(x-best_rest_filter))
+
+    # Finds the color correction dictionary key closest to best_rest_filter 
+    ccnl =  min(color_cor.keys(), key=lambda x:abs(x-best_rest_filter)) # redundant? or intentional?
     ccn = color_cor[ccnl] ## color correcting filers...
+
 
     if redshift > 1.5:
         vega_spec = loadtxt(base_root+'/templates/vega_model.dat')
@@ -330,11 +306,15 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
     start_time = time.time()
     if parallel:
         if verbose: print('... running parallel kcor by model SN age on %d processors' %Nproc)
-        run_kcor_x= partial(kcor, f1=f1, f2=f2, models_used_dict=models_used_dict, redshift=redshift, vega_spec=vega_spec)
+        run_kcor_x= partial(kcor, f1=f1, f2=f2, models_used_dict=models_used_dict, redshift=redshift, 
+                            vega_spec=vega_spec, AB=False)
         pool = multiprocessing.Pool(processes=Nproc)
         result_list = pool.map(run_kcor_x, rest_age)
+        # Convert result_list into a 2D numpy array of shape (N_ages, 2) 
+        # where column 0 is the mean K-correction and column 1 is the std at each age.
         obs_kcor=array(result_list)
         pool.close()
+
     else:
         obs_kcor=[]
         if verbose: print('... running serial kcor iterating over model SN age')
@@ -345,16 +325,15 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         obs_kcor=array(obs_kcor)
     if verbose: print('kcor processing time = %2.1f seconds'%(time.time()-start_time))
 
+    
     ### try a low-order smooth over kcor for valid points, then extrapolate
+    obs_kcor_raw = obs_kcor.copy()
     if 'ia' in type:
-        obs_kcor[:,0][-1]=nanmean(obs_kcor[:,0])## add anchoring at end of kcor curve
+        obs_kcor[:,0][-1]=nanmean(obs_kcor[:,0])## add anchoring at end of kcor curve (mean kcor for Ia's)
     else: 
-        obs_kcor[:,0][-1]=0.0## add am anchoring at end of kcor curve
+        obs_kcor[:,0][-1]=0.0## add am anchoring at end of kcor curve (late-phase kcor anchor=0 for CCSNe)
        
-    obs_kcor[:,0] = convolve(obs_kcor[:,0], Gaussian1DKernel(dstep), boundary='extend')#'fill', fill_value=nanmean(obs_kcor[:,0]))
-    ## if review:    
-    ##     clf() ; ax=subplot(111);  ax.plot(rest_age, obs_kcor[:,0], 'k-'); show()
-    ##     pdb.set_trace()
+    obs_kcor[:,0] = convolve(obs_kcor[:,0], Gaussian1DKernel(lc_smoothing_window), boundary='extend')#'fill', fill_value=nanmean(obs_kcor[:,0]))
         
     ### replace NaNs in kcor with linearly interpolated data, and constant interpolated error
     idx = where(obs_kcor[:,0]==obs_kcor[:,0])
@@ -367,32 +346,61 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         obs_kcor[:,1][where(obs_kcor[:,1]!=obs_kcor[:,1])]=0. ## remove nan's in errors.
     apl_kcor = obs_kcor[:,0]
 
+    # Plot mean kcor vs phase (smoothed and unsmoothed); plot kcor std/mean vs phase
     if review:
-        clf() ; ax=subplot(111);  ax.plot(rest_age, obs_kcor[:,0], 'k-'); savefig('kcorrecton.png')
+        plot_kcor_diagnostic(rest_age=rest_age, obs_kcor=obs_kcor_raw, obs_kcor_smoothed=obs_kcor[:,0], type=type[0], 
+                             best_rest_filter=best_rest_filter,redshift=redshift, diag_dir=diag_dir)
 
     ### distance modulus and time dilation
+    # peak the distance modulus shifted by 19.5 magnitudes; quick reference magnitude for the Ia light curve normalization
+    # d is luminosity distance, mu is distance modulus, td is (1+z)
     d, mu, peak = cosmocalc.run(redshift, **cosmo)
     td = (1.+redshift)
 
     ## control times
+    # Initialize four empty lists that will store the light curve magnitude and K-correction 
+    # at two previous epochs for each current age step. These represent what the SN looked like 
+    # one baseline ago (template) and two baselines ago (prev), which is what a difference imaging 
+    # pipeline compares against to detect a new transient.
     template_light_curve=[]
     prev_light_curve=[]
     template_kcor = []
     prev_kcor = []
+    # Convert the observer-frame survey baseline to the rest frame by dividing by the time dilation factor td = (1+z)
     rest_base=baseline/td
+
+    # Loop over every age step in the rest-frame age grid
     for i,age in enumerate(rest_age):
+        # If subtracting one rest-frame baseline from the current age falls before the start 
+        # of the age grid (before -50 days), the SN hadn't appeared yet at the previous epoch. 
+        # Sets the previous-epoch magnitude to 999.0 (undetectably faint) and K-correction to 0. 
+        # In the difference imaging calculation downstream, this means the entire current flux 
+        # counts as a new detection since there was nothing to subtract
         if age - rest_base < min(rest_age):
             template_light_curve.append(999.0)
             template_kcor.append(0)
+        
         else:
+            # For ages where one baseline back falls within the age grid, find the index 
+            # in rest_age closest to age - rest_base
+            # Require the age to be within dstep days of the target, then among those candidates 
+            # pick the one with the minimum distance
             idx = where((abs(age - rest_base - rest_age)<=dstep) & (abs(age - rest_base - rest_age)==min(abs(age - rest_base - rest_age))))
+            # Append the light curve magnitude and K-correction at that previous-epoch age
             template_light_curve.append(observed_frame_lightcurve[idx][:,0][0])
             template_kcor.append(apl_kcor[idx][0])
-        if age - rest_base-prev/td < min(rest_age):
+
+        # baseline — the time between the current epoch and the previous epoch (observer-frame days)
+        # prev — the time between the previous epoch and the epoch before that (observer-frame days)
+        #if age - rest_base-prev/td < min(rest_age):
+        if prev == 0 or age - rest_base-prev/td < min(rest_age):
             prev_light_curve.append(999.0)
             prev_kcor.append(0)
         else:
-            idx2 = where(abs(age-rest_base-prev/td - rest_age+dstep)<=dstep)
+            #idx2 = where(abs(age-rest_base-prev/td - rest_age+dstep)<=dstep)
+            idx2 = where((abs(age-rest_base-prev/td - rest_age)<=dstep) & 
+             (abs(age-rest_base-prev/td - rest_age)==min(abs(age-rest_base-prev/td - rest_age))))
+
             prev_light_curve.append(observed_frame_lightcurve[idx2][:,0][0])
             prev_kcor.append(apl_kcor[idx2][0])
 
@@ -413,23 +421,52 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         ax3=ax1.inset_axes([0.9,0.0,0.08,1.0])
         yminl=[]
         ymaxl=[]
-    ## loop on extinction function
+
+    # Loop on extinction function
+    # ext_normalization accumulates the integral of the extinction probability distribution for normalization later
     ext_normalization=0.0
     if extinction:
         dastep = dastep
+        # Integrate over host galaxy extinction values from 0 to 10 magnitudes in steps of dastep
         darange = arange(0.,10.0+dastep,dastep)
     else:
         dastep = 1.0
         darange = [0.]
+
+    # Outer loop over extinction values. da is the host galaxy extinction in magnitudes (A_V or similar) 
+    # applied uniformly to all filters via the Calzetti law later.
     for da in darange:
-    ## loop on luminosity function
+
+        # Loop on luminosity function
+        # Inner loop over absolute magnitude offsets from -5 to +5 mag in steps of dmstep. 
+        # dm samples the luminosity function — negative values represent intrinsically brighter 
+        # SNe than the mean, positive values represent fainter ones. lum_normalization 
+        # accumulates the integral of the luminosity function for normalization.
         dmstep=dmstep
         dmrange=arange(-5,5+dmstep,dmstep)
         lum_normalization=0.0
         for dm in dmrange:
+            # Convert the current epoch light curve from magnitudes to fluxes
+            # The magnitude at each age is:
+            # m = apl_kcor + observed_frame_lightcurve[:,0] + mu + dm + da + ccn
+            # Where:
+            # apl_kcor — K-correction converting rest-frame to observed-frame magnitude
+            # observed_frame_lightcurve[:,0] — rest-frame absolute magnitude from templates
+            # mu — distance modulus converting absolute to apparent magnitude
+            # dm — luminosity function offset
+            # da — host galaxy extinction
+            # ccn — color correction
+            # This gives the apparent flux of the SN as it would appear through the observed JWST filter at each age
             f1 = 10**(-2./5.*(apl_kcor+observed_frame_lightcurve[:,0]+mu+dm+da+ccn))
+            # Same conversion but for the previous epoch light curve (one baseline ago)
+            # This is what the reference image contains — the SN flux at the previous observation
             f2 = 10**(-2./5.*(template_kcor+template_light_curve+mu+dm+da+ccn))
+            # Compute the flux difference between the current epoch and the previous epoch. 
+            # This is what a difference imaging pipeline actually detects
+            # A positive diff_f means the SN got brighter since the last epoch (rising or near peak), 
+            # while negative means it got fainter (declining).
             diff_f = (f1 - f2)
+            # Convert the flux difference back to magnitudes, only counting positive fluxes (detections)
             delta_mag = zeros(diff_f.shape)
             tdx = where(diff_f>0)
             delta_mag[tdx]=-2.5*log10(diff_f[tdx])
@@ -569,6 +606,112 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
     return(tot_ctrl/365.25)
     
 
+def plot_kcor_diagnostic(rest_age, obs_kcor, obs_kcor_smoothed, type, best_rest_filter, redshift, diag_dir):
+    """
+    Plots the mean K-correction and its standard deviation across template models
+    as a function of rest-frame age, along with the smoothed K-correction curve
+
+    Parameters
+    ----------
+    rest_age: numpy.ndarray
+        1D array of rest-frame ages in days.
+    obs_kcor: numpy.ndarray
+        2D array of shape (N_ages, 2) where column 0 is the mean
+        K-correction and column 1 is the standard deviation across
+        templates at each age. This is the raw unsmoothed K-correction
+    obs_kcor_smoothed: numpy.ndarray
+        1D array of shape (N_ages,) containing the smoothed K-correction
+        after Gaussian convolution and anchoring. This is what actually
+        gets used in the control time calculation.
+    type: str
+        SN subtype 
+    best_rest_filter: int
+        Central wavelength of the best matching rest-frame filter in nm.
+    redshift: float
+        Redshift of the current bin, used for the plot title.
+    diag_dir: str
+        Path to the diagnostic plots directory.
+    """
+    fig, (ax1, ax2) = subplots(1, 2, figsize=(14, 6))
+
+    # Left panel: raw mean kcor with sigma shading and smoothed curve
+    mean_kc = obs_kcor[:,0]
+    std_kc  = obs_kcor[:,1]
+
+    # mask NaN values for plotting
+    valid = isfinite(mean_kc) & isfinite(std_kc)
+
+    ax1.fill_between(rest_age[valid],
+                     mean_kc[valid] - 2*std_kc[valid],
+                     mean_kc[valid] + 2*std_kc[valid],
+                     alpha=0.15, color='blue', label='2-sigma template spread')
+    ax1.fill_between(rest_age[valid],
+                     mean_kc[valid] - std_kc[valid],
+                     mean_kc[valid] + std_kc[valid],
+                     alpha=0.3, color='blue', label='1-sigma template spread')
+    ax1.plot(rest_age[valid], mean_kc[valid], 'k-', lw=2, label='Mean K-correction (raw)')
+    ax1.plot(rest_age, obs_kcor_smoothed, 'r--', lw=2, label='K-correction (smoothed)')
+    ax1.axhline(0., color='gray', ls='--', lw=1, alpha=0.5)
+    ax1.axvline(0., color='gray', ls='--', lw=1, alpha=0.5)
+    ax1.set_xlabel('Rest-frame age (days)')
+    ax1.set_ylabel('K-correction (mag)')
+    #ax1.set_xlim(-50, 200)
+    ax1.set_xlim(-50, 730)
+    ax1.legend(fontsize=9)
+    ax1.set_title('%s K-correction vs age\nz=%.2f, rest filter=%d nm' % (
+                  type, redshift, best_rest_filter))
+
+    # Right panel: std as a fraction of mean kcor
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        frac_std = abs(std_kc[valid] / mean_kc[valid])
+
+    ax2.plot(rest_age[valid], std_kc[valid], 'r-', lw=2, label='Absolute std (mag)')
+    ax2.plot(rest_age[valid], frac_std, 'b--', lw=2, label='Fractional std (|std/mean|)')
+    ax2.axhline(0.1, color='gray', ls=':', lw=1, label='0.1 mag reference')
+    ax2.axhline(0.5, color='gray', ls='--', lw=1, label='0.5 mag reference')
+    ax2.axvline(0., color='gray', ls='--', lw=1, alpha=0.5)
+    ax2.set_xlabel('Rest-frame age (days)')
+    ax2.set_ylabel('K-correction spread')
+    ax2.set_xlim(-50, 200)
+    ax2.set_ylim(0, min(nanmax(std_kc[valid])*1.5, 5.))
+    ax2.legend(fontsize=9)
+    ax2.set_title('K-correction template spread\nz=%.2f, rest filter=%d nm' % (
+                  redshift, best_rest_filter))
+
+    tight_layout()
+    savefig('%s/%s_%dnm_z%.2f_kcor_diagnostic.png' % (
+            diag_dir, type, best_rest_filter, redshift))
+    clf()
+
+
+def plot_restframe_lightcurves(rflc, rest_age, models_used, type, diag_dir):
+    
+    # Diagnostic plots showing used_model rest-frame light curves in all available rest-frame filters
+    for k, v in rflc.items():
+        clf()
+        fig, ax = subplots(1, 1, figsize=(12, 7))
+        v = array(v)
+        colors = [cm.viridis(i/max(len(v)-1, 1)) for i in range(len(v))]
+        for ii in range(len(v)):
+            ax.plot(rest_age, v[ii], color=colors[ii], lw=1.0, alpha=0.7,
+                    label='%s' % models_used[ii])
+        ax.set_xlim(-50, 200)
+        # set y limits based on physically meaningful values
+        physical = v[v < 50.]
+        if len(physical) > 0:
+            ax.set_ylim(nanmax(physical)+2, nanmin(physical)-2)
+        else:
+            ax.set_ylim(-10, -20)
+        ax.set_xlabel('Rest-frame age (days)')
+        ax.set_ylabel('Absolute magnitude')
+        ax.set_title('%s individual template light curves, filter = %d nm' % (type, k))
+        ax.legend(fontsize=10, ncol=2, loc='lower right',
+                  framealpha=0.5, bbox_to_anchor=(1.0, 0.0))
+        tight_layout()
+        savefig('%s/%s_%dnm_individual_templates.png' % (diag_dir, type, k))
+        clf()
+
 def plot_anchoring_diagnostic(lc_smoothed, lc_normalized, lc_anchored, rest_age, type, diag_dir, absmags):
     """
     Plots the representative light curve at three stages of the anchoring
@@ -590,8 +733,8 @@ def plot_anchoring_diagnostic(lc_smoothed, lc_normalized, lc_anchored, rest_age,
         1D array of rest-frame ages in days.
     type : str
         SN subtype label used for plot title and filename (e.g. 'iip').
-    run_name : str
-        Name of the current run, used for output filename.
+    diag_dir : str
+        'diagnostic_plots/<run_name>/', used for output filename.
     absmags : dict
         Dictionary of mean peak absolute magnitudes from Richardson 2014,
         keyed by SN subtype.
@@ -644,8 +787,8 @@ def plot_smoothing_diagnostic(observed_frame_lightcurve_unsmoothed, observed_fra
         1D array of rest-frame ages in days.
     type: str
         SN subtype label used for plot title and filename.
-    run_name: str
-        Name of the current run, used for output filename.
+    diag_dir: str
+        '/diagnostic_plots/<run_name>/', used for output filename.
     dstep: float
         Step size in days, used as the Gaussian kernel standard deviation.
     """
@@ -971,8 +1114,74 @@ def slsn_lc(xt, tm=29.94, b14=3.82, pms=1.0):
     
 
 def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, AB=False):
+    """
+    Computes the K-correction at a single rest-frame age by integrating
+    SN SED templates through the observed and rest-frame filters. The
+    K-correction converts the rest-frame template magnitude to the
+    observed-frame magnitude, accounting for both the SN's spectral
+    shape and the zero-point difference between the two filter systems.
+
+    Parameters
+    ----------
+    best_age: float
+        Rest-frame age in days at which to compute the K-correction.
+    f1: numpy.ndarray
+        2D array of shape (N_wavelengths, 2) containing the observed
+        filter transmission curve. Column 0 is wavelength in Angstroms,
+        column 1 is transmission. 
+    f2: numpy.ndarray
+        2D array of shape (N_wavelengths, 2) containing the best matching
+        rest-frame filter transmission curve. Column 0 is wavelength in
+        Angstroms, column 1 is transmission.
+    models_used_dict: dict
+        Dictionary mapping model names to their full SED data arrays.
+        Each SED array has columns: age (days), wavelength (Angstroms),
+        f_lambda flux. 
+    redshift: float
+        Redshift of the SN
+    vega_spec: numpy.ndarray
+        2D array containing the Vega reference spectrum. Column 0 is
+        wavelength in Angstroms, column 1 is flux. 
+    extrapolated: bool, optional
+        If True, extends the SED spectrum to cover the full wavelength
+        range of both filters by anchoring to zero flux at 1000 and
+        60000 Angstroms and interpolating. This handles cases where the
+        observed filter (blueshifted) falls outside the native SED
+        wavelength range. Default is True.
+    AB: bool, optional
+        If True, uses the AB magnitude K-correction formula which
+        includes a cosmological bandwidth correction term
+        -2.5*log10(1+redshift) and uses the AB reference integrals
+        (synth_AB, nearest_AB) instead of the Vega reference integrals.
+        If False, uses the Vega magnitude K-correction formula.
+        Default is False.
+
+    Returns
+    -------
+    result: tuple of (float, float)
+        A tuple of (mean_kcor, std_kcor) where:
+        - mean_kcor is the mean K-correction in magnitudes averaged
+          across all template models that had valid spectra near best_age.
+          This is the value added to the template light curve magnitude
+          in the control time calculation.
+        - std_kcor is the standard deviation of the K-correction across
+          template models, representing the uncertainty from template
+          diversity. A large std_kcor indicates the K-correction is
+          sensitive to the choice of template.
+        Returns (NaN, NaN) if no valid K-corrections could be computed
+        at this age, e.g. if no templates have spectra near best_age
+        or if all flux integrals are zero or negative.
+    """
+
     import warnings#,exceptions
+    
+    # Treat all RuntimeWarnings as exceptions that will crash the program (to catch numerical issues)
     warnings.simplefilter("error",RuntimeWarning)
+
+    # RuntimeWarnings are treated as errors globally, so np.nanmean() on an empty array would crash
+    # the program. my_nanmean() locally catches that specific RuntimeWarning and returns NaN instead,
+    # allowing the K-correction for that model/age to be flagged as invalid rather than crashing
+    # the entire parallel calculation.
     def my_nanmean(a):
         with warnings.catch_warnings():
             warnings.filterwarnings('error')
@@ -982,54 +1191,124 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
                 x=np.NaN
         return(x)
         
+    # Initialize an empty list to accumulate K-correction values across all SED template models.
     kcor = []
 
+    # Find the indices of the Vega spectrum where the wavelength falls within the wavelength range of the 
+    # observed filter f1. This clips the Vega spectrum to only the wavelengths covered by the observed filter
     idx = where((vega_spec[:,0]>=min(f1[:,0]))&(vega_spec[:,0]<=max(f1[:,0])))
+
+    # Interpolate the observed filter transmission curve f1 onto the Vega spectrum wavelength 
+    # grid within the filter range. restf1 is the filter transmission evaluated at every Vega 
+    # spectrum wavelength point 
     (junk,restf1)=u.recast(vega_spec[idx][:,0],0.,f1[:,0],f1[:,1])
+
+    # Compute the synthetic Vega flux through the observed filter f1
+    # This is a discrete approximation of the integral: 
+    # synth_vega = integral(lambda * T(lambda) * F_vega(lambda) * dlambda)
+    # Where:
+    # vega_spec[idx][:,0] — wavelength (lambda)
+    # array(restf1) — filter transmission T(lambda) interpolated onto the Vega wavelength grid
+    # vega_spec[idx][:,1] — Vega flux F_vega(lambda)
+    # my_nanmean(diff(vega_spec[idx][:,0])) — mean wavelength step size dlambda
+    # The lambda weighting converts from energy units (f_lambda) to photon-counting units, 
+    # which is what a detector actually measures.
     synth_vega = sum(vega_spec[idx][:,0]*array(restf1)*vega_spec[idx][:,1])*my_nanmean(diff(vega_spec[idx][:,0]))
+    
+    # Computes the AB reference flux through the observed filter f1. The AB magnitude system is defined 
+    # such that a source with constant flux density f_nu has the same magnitude in all filters. 
+    # The AB zero point integral is: synth_AB = integral(T(lambda)/lambda * dlambda)
+    # Where:
+    # f1[:,0]**-1 — 1/lambda
+    # f1[:,1] — filter transmission T(lambda)
+    # my_nanmean(diff(f1[:,0])) — mean wavelength step size dlambda
+    # This is used in the AB magnitude K-correction formula when AB=True.
     synth_AB = sum(f1[:,0]**-1*f1[:,1])*my_nanmean(diff(f1[:,0]))
+
+    # Clip the Vega spectrum to the rest-frame filter wavelength range
     idx = where((vega_spec[:,0]>=min(f2[:,0]))&(vega_spec[:,0]<=max(f2[:,0])))
+
+    # Interpolate the rest-frame filter transmission onto the Vega wavelength grid
     (junk,restf2)=u.recast(vega_spec[idx][:,0],0.,f2[:,0],f2[:,1])
+
+    # Synthetic Vega flux through the rest-frame filter
     nearest_vega = sum(vega_spec[idx][:,0]*array(restf2)*vega_spec[idx][:,1])*my_nanmean(diff(vega_spec[idx][:,0]))
+    
+    # AB reference flux through the rest-frame filter
     nearest_AB = sum(f2[:,0]**-1*f2[:,1])*my_nanmean(diff(f2[:,0]))
 
     
     ### now sn spectrum
     for model in models_used_dict.keys():
         spec = models_used_dict[model]
+        # Find all rows in the SED where the age is within 3 days of best_age
         idx = where(abs(spec[:,0]-best_age)<3.)
+        # Skip this model at this age if either:
+        # No spectra were found within 3 days of best_age (the model has no data near this age)
+        # The total flux is zero (the SN hasn't exploded yet — pre-explosion baseline)
         if (len(idx[0])==0.0) or (sum(spec[idx][:,2]) == 0.0): continue
 
         if extrapolated:
             ### extrapolated spectrum method
+            # Extrapolate the SED templates down up to 60000 Angstrom and down to 1000 Angstrom
             wave_plus = arange(spec[idx][:,1][-1],60000.,10.)
-            wave_minus = arange(1000.,spec[idx][:,1][-1],10.)
+            #wave_minus = arange(1000.,spec[idx][:,1][-1],10.)
+            wave_minus = arange(1000.,spec[idx][:,1][0],10.)
+            # Create an anchored version of the SED by adding two boundary points: 
+            # zero flux at 1000 Å and zero flux at 60000 Å.
             anchored_x = array([1000.]+list(spec[idx][:,1])+[60000.])
             anchored_y = array([0.]+list(spec[idx][:,2])+[0.])
+            # Interpolate the anchored SED onto the extended wavelength grids (smooth taper to 0 at extremes)
             j1, counts_plus = u.recast(wave_plus, 0., anchored_x, anchored_y)
             j1, counts_minus = u.recast(wave_minus, 0., anchored_x, anchored_y)
+            # Concatenate the below-SED extension, SED, and above-SED extension into single wavelength+flux arrays
             xx = array(list(wave_minus)+list(spec[idx][:,1])+list(wave_plus))
             yy = array(list(counts_minus)+list(spec[idx][:,2])+list(counts_plus))
+            # Sort by wavelength to ensure xx (wavelength) is monotonically increasing
             xx, yy = zip(*sorted(zip(xx,yy)))
             xx, yy = array(xx), array(yy)
             
+            # Finds the indices of the extended restframe SED array xx that fall within 
+            # the wavelength range of the blueshifted observed filter
             idx2 = where((xx >=min(f1[:,0]/(1+redshift)))&(xx<=max(f1[:,0]/(1+redshift))))
+            # Interpolate the blueshifted observed filter transmission onto the restframe SED 
+            # wavelength grid within the filter range. restf1 is the filter transmission evaluated 
+            # at every restframe SED wavelength point in xx[idx2], putting the filter and SED on the same 
+            # wavelength grid for integration
             (junk,restf1)=u.recast(xx[idx2],0.,f1[:,0]/(1+redshift),f1[:,1])
+            
+            # Computes the synthetic SN flux through the blueshifted observed filter:
+            # synth_obs = integral(lambda * T(lambda/(1+z)) * F_SN(lambda) * dlambda)
+            # Where:
+            # xx[idx2] — rest-frame wavelengths (lambda)
+            # array(restf1) — blueshifted filter transmission T(lambda/(1+z))
+            # yy[idx2] — rest-frame SN SED flux F_SN(lambda)
+            # my_nanmean(diff(xx[idx2])) — mean wavelength step dlambda
+            # This represents the flux you would observe from this SN through your JWST filter.
             if AB:
-                synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
+                # MAY NEED TO CHANGE BACK LATER
+                #synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
+                synth_obs = sum(array(restf1)/xx[idx2]*yy[idx2])*my_nanmean(diff(xx[idx2]))
             else:
                 synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
 
+            # Find the indices of the extended SED that fall within the wavelength range 
+            # of the rest-frame filter f2 (this time without any blueshifting, since f2 
+            # is already in the rest frame)
             idx3 = where((xx >=min(f2[:,0]))&(xx<=max(f2[:,0])))
+            # Interpolate the rest-frame filter transmission onto the SED wavelength grid 
+            # within the rest-frame filter range
             (junk,restf2)=u.recast(xx[idx3],0.,f2[:,0],f2[:,1])
+            # Compute the synthetic SN flux through the rest-frame filter
+            # This is what you would observe if you could observe the SN directly through 
+            # the rest-frame filter without any redshift — essentially the "idealized" flux that 
+            # the templates were calibrated in
             if AB:
-                nearest_obs = sum(xx[idx3]*array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3]))
+                # MAY NEED TO CHANGE THIS BACK LATER
+                #nearest_obs = sum(xx[idx3]*array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3]))
+                nearest_obs = sum(array(restf2)/xx[idx3]*yy[idx3])*my_nanmean(diff(xx[idx3]))
             else:
                 nearest_obs = sum(xx[idx3]*array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3]))
-
-            ## idx2 = where((xx >=min(f2[:,0]))&(xx<=max(f2[:,0])))
-            ## (junk,restf2)=u.recast(xx[idx2],0.,f2[:,0],f2[:,1])
-            ## nearest_obs = sum(xx[idx2]*array(restf2)*yy[idx2])*my_nanmean(diff(xx[idx2]))
 
         else:
             ### reduce the computation by only working with wavelengths that are defined in filter throughputs
@@ -1053,20 +1332,31 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             ## (junk,restf2) = u.recast(spec[idx][idx2][:,1],0.,f2[:,0],f2[:,1])
             ## nearest_obs = sum(spec[idx][idx2][:,1]*array(restf2)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
 
-        try:
-            kc = -1*(2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_vega/nearest_vega))
-        except:
-            kc = float('Nan')
         if AB:
             try:
                 kc = -1*(-2.5*log10(1.+redshift)+2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_AB/nearest_AB))
             except:
-                float('Nan')
+                # float('Nan')
+                kc = float('Nan')
+        else:
+            try:
+                kc = -1*(2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_vega/nearest_vega))
+            except:
+                kc = float('Nan')
+
+        # Append this model's K-correction to the list. After the loop over all models, 
+        # kcor contains one K-correction value per template model.
         kcor.append(kc)
+
+    # If kcor is empty — meaning no models had valid spectra near this age — returns a NaN tuple.
     if not kcor:
         result=(float('Nan'),float('Nan'))
+    # If there's only one K-correction value and it's NaN, returns a NaN tuple.
     elif len(kcor)==1 and kcor[0]!=kcor[0]:
         result=(float('Nan'),float('Nan'))
+    # For all other cases, computes the mean and standard deviation of the K-corrections across all template models
+    # The result is a tuple of (mean_kcor, std_kcor) — the mean is the K-correction value used in the 
+    # control time calculation, while the std captures the template-to-template uncertainty in the K-correction. 
     else:
         try:
             result=(my_nanmean(kcor),nanstd(kcor))

@@ -231,7 +231,7 @@ def plot_tc_per_type(tc_per_type, z_low, z_high, method, diag_dir, mag=None):
 def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, sndata_root, model_path,
         types,passband,maglim,survey,Nproc=1,extinction=True,obs_extin=True,
         verbose=verbose, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
-        dstep=0.5, dmstep=0.1, dastep=0.1,
+        dstep=0.5, dmstep=0.1, dastep=0.1, lc_smoothing_window=3,
         biascor=None, subtype_combination='divide_average', vol_frac_set=None,
         cosmology=None, review = False, ratefile=None, eventtable=None):
 
@@ -249,8 +249,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Initial rate guess for input redshift bin, based on cosmic SFRD; used to compute N_exp
     number_guess: float
         Observed number of SNe in your redshift bin from your survey
-    run_name: str
-        Name attached to your output diagnostic plots
+    diag_dir: str
+        Name attached to your output diagnostic plots directory (e.g., 'diagnostic_plots/<run_name>/')
     base_root: str
         Absolute path to your BoomRate directory
     sndata_root: str
@@ -361,6 +361,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                       type=[type], prev=prev, passband=passband,
                                       passwavemult=passwavemult, passskiprow=passskiprow,
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
+                                      lc_smoothing_window=lc_smoothing_window,
                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
                                       verbose=verbose, plot=True,
                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
@@ -465,6 +466,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         plot_tc_per_type(tc_per_type, redshift1, redshift2, subtype_combination,
                          diag_dir, mag=sens)
     return([Nexp, Nexp_hi, Nexp_lo, tc_tot])
+    
 
     
 def poisson_error(n):
@@ -572,6 +574,7 @@ def main(configfile=None):
 
     ## some for setting the fineness of SN parameter eval
     dstep=config['day_step']
+    lc_smoothing_window=config['lc_smoothing_window']
     dmstep=config['abs_mag_step']
     dastep=config['extinction_step']
     box_tc=json.loads(config['box_tc'])
@@ -838,6 +841,7 @@ def main(configfile=None):
                                         survey = survey,
                                         box_tc=box_tc,
                                         dstep=dstep, dmstep=dmstep, dastep=dastep,
+                                        lc_smoothing_window=lc_smoothing_window,
                                         passwavemult=passwavemult,
                                         passskiprow=passskiprow,
                                         eventtable=eventtable,
