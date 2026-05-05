@@ -1,0 +1,34 @@
+{
+    "_comment": "Per-subtype absolute magnitudes. Each entry is [mean, sigma] or [mean, sigma, sigma_sys]; only [0]=mean and [1]=sigma are used by control_time. Pick a set via the 'absmag_set' config key.",
+    "_options": ["li_2011", "richardson_2014", "dahlen_2012"],
+    "_default": "richardson_2014",
+
+    "li_2011": {
+        "_source": "Li et al. 2011",
+        "iip": [-15.66, 1.23, 0.16],
+        "iin": [-16.86, 1.61, 0.59],
+        "iil": [-17.44, 0.64, 0.22],
+        "ib":  [-17.01, 0.41, 0.17],
+        "ic":  [-16.04, 1.28, 0.31],
+        "ibc": [-16.04, 1.28, 0.31]
+    },
+    "richardson_2014": {
+        "_source": "Richardson et al. 2014",
+        "iip":  [-16.80, 0.97, 0.37],
+        "iin":  [-18.62, 1.48, 0.32],
+        "iil":  [-17.98, 0.90, 0.34],
+        "ib":   [-17.54, 0.94, 0.33],
+        "ic":   [-16.67, 1.04, 0.40],
+        "ibc":  [-16.67, 1.04, 0.40],
+        "ia":   [-19.26, 0.51, 0.20],
+        "slsn": [-21.7,  0.4,  0.0]
+    },
+    "dahlen_2012": {
+        "_source": "Dahlen et al. 2012",
+        "iip": [-16.67, 1.12],
+        "iin": [-18.82, 0.92],
+        "iil": [-17.23, 0.38],
+        "ib":  [-19.38, 0.46],
+        "ic":  [-17.07, 0.49]
+    }
+}

@@ -30,46 +30,10 @@ from astropy.convolution import convolve, Gaussian1DKernel
 
 
 # Volumetric subtype fractions are loaded by control_time from vol_fractions.json
-# (see 'vol_frac_set' in the config).
+# (see 'vol_frac_set' in the config). Absolute magnitudes are loaded from
+# absmags.json (see 'absmag_set' in the config).
 
-absmags_li_2011 = {
-    'iip': [-15.66, 1.23, 0.16],
-    'iin': [-16.86, 1.61, 0.59],
-    'iil': [-17.44, 0.64, 0.22],
-    'ib' : [-17.01, 0.41, 0.17],
-    'ic' : [-16.04, 1.28, 0.31],
-    'ibc': [-16.04, 1.28, 0.31],
-    }
-
-absmags_richardson_2014 = {
-    'iip': [-16.80, 0.97, 0.37],
-    'iin': [-18.62, 1.48, 0.32],
-    'iil': [-17.98, 0.90, 0.34],
-    'ib' : [-17.54, 0.94, 0.33],
-    'ic' : [-16.67, 1.04, 0.40],
-    'ibc': [-16.67, 1.04, 0.40],
-    'ia' : [-19.26, 0.51, 0.20],
-    #'fast' : [-17.5, 1.0, 0.1], ## not sure where this is from
-    'slsn': [-21.7, 0.4,0.0], ## from Quimby+2013, by way of Gal-Yam 2018   
-    ## 'slsn': [-30, 2.5,0.0], ## from Whalen et al. 2013
-    }
-#
-
-absmags_dahlen_2012 = {
-    'iip': [-16.67, 1.12],
-    'iin': [-18.82, 0.92],
-    'iil': [-17.23, 0.38],
-    'ib' : [-19.38, 0.46],
-    'ic' : [-17.07, 0.49],
-    }
-    
-
-absmags=absmags_richardson_2014
 verbose = True
-
-#absmag_new = {}
-#for key in absmags.keys(): absmag_new[key]=[absmags[key][0]-absmags[key][2],absmags[key][1],absmags[key][2]]
-#absmags=absmag_new
 
 
 def snrates(z,*p):
@@ -233,7 +197,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         verbose=verbose, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1, lc_smoothing_window=3,
         biascor=None, subtype_combination='divide_average', vol_frac_set=None,
-        cosmology=None, review = False, ratefile=None, eventtable=None):
+        absmag_set=None, cosmology=None, review = False, ratefile=None, eventtable=None):
 
     '''
     Computes the supernova rate and expected number of detections for a single
@@ -362,7 +326,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                       passwavemult=passwavemult, passskiprow=passskiprow,
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
                                       lc_smoothing_window=lc_smoothing_window,
-                                      biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
+                                      biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, absmag_set=absmag_set, cosmology=cosmology, review=review,
                                       verbose=verbose, plot=True,
                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
             else:
@@ -371,7 +335,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
+                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, absmag_set=absmag_set, cosmology=cosmology, review=review,
                                        verbose=verbose,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
                 tc2 = control_time.run(redshift2, baseline, sens, Nproc=Nproc, parallel=parallel,
@@ -379,7 +343,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
+                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, absmag_set=absmag_set, cosmology=cosmology, review=review,
                                        verbose=verbose, plot=True,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
                 
@@ -419,11 +383,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         # tc_tot already holds sum_X (f_X * T_raw_X) summed over survey rows
     else:
         # 'divide_average' (original): control_time returned T_raw_X / f_X per subtype;
-        # average across subtypes
-        Nexp = sum(list(N.values())) / len(types)
-        tc_tot = tc_tot / len(types)
-        for t in tc_per_type:
-            tc_per_type[t] /= len(types)
+        # sum across subtypes WITHOUT averaging by N_types (per user request)
+        Nexp = sum(list(N.values()))
 
     ## pdb.set_trace()
     
@@ -537,6 +498,7 @@ def main(configfile=None):
     biascor = config['biascor']
     subtype_combination = config.get('subtype_combination', 'divide_average')
     vol_frac_set = config.get('vol_frac_set', None)  # None -> use default in vol_fractions.json
+    absmag_set = config.get('absmag_set', None)      # None -> use default in absmags.json
     cosmology = config.get('cosmology', None)        # None -> use default in cosmologies.json
 
     cadence_file=config['cadence_file']
@@ -850,6 +812,7 @@ def main(configfile=None):
                                         biascor=biascor,
                                         subtype_combination=subtype_combination,
                                         vol_frac_set=vol_frac_set,
+                                        absmag_set=absmag_set,
                                         cosmology=cosmology,
                                         review = review,
                                         diag_dir = diag_dir,

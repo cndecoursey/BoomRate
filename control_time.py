@@ -33,6 +33,8 @@ rcParams['font.size']=16.0
 
 # Volumetric subtype fractions live in vol_fractions.json next to this module.
 _VOL_FRAC_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'vol_fractions.json')
+# Per-subtype absolute magnitudes live in absmags.json next to this module.
+_ABSMAGS_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'absmags.json')
 
 def load_vol_frac(name=None, path=None):
     with open(path or _VOL_FRAC_FILE) as f:
@@ -49,7 +51,18 @@ def load_vol_frac(name=None, path=None):
         vf = {k: (v/cc_sum if k in cc_keys else v) for k, v in vf.items()}
     return vf
 
+def load_absmags(name=None, path=None):
+    with open(path or _ABSMAGS_FILE) as f:
+        data = json.load(f)
+    if name is None:
+        name = data.get('_default', 'richardson_2014')
+    if name not in data or name.startswith('_'):
+        raise KeyError("Unknown absmag_set %r; options: %s"
+                       % (name, [k for k in data if not k.startswith('_')]))
+    return {k: v for k, v in data[name].items() if not k.startswith('_')}
+
 vol_frac = load_vol_frac()  # module-level default (li_2011)
+absmags = load_absmags()    # module-level default (richardson_2014)
 
 template_peak = { ##the assumed normalization for the SNANA templates
     'iip': -16.05,
@@ -62,42 +75,6 @@ template_peak = { ##the assumed normalization for the SNANA templates
     'slsn': -21.7,
     }
 
-absmags_li_2011 = {
-    'iip': [-15.66, 1.23, 0.16],
-    'iin': [-16.86, 1.61, 0.59],
-    'iil': [-17.44, 0.64, 0.22],
-    'ib' : [-17.01, 0.41, 0.17],
-    'ic' : [-16.04, 1.28, 0.31],
-    'ibc': [-16.04, 1.28, 0.31],
-    }
-
-absmags_richardson_2014 = {
-    'iip': [-16.80, 0.97, 0.37],
-    #'iin': [-16.86, 1.61, 0.59],
-    'iin': [-18.62, 1.48, 0.32],
-    'iil': [-17.98, 0.90, 0.34],
-    'ib' : [-17.54, 0.94, 0.33],
-    'ic' : [-16.67, 1.04, 0.40],
-    'ibc': [-16.67, 1.04, 0.40],
-    'ia' : [-19.26, 0.51, 0.20],
-    'slsn': [-21.7, 0.4,0.0], ## from Quimby+2013, by way of Gal-Yam 2018
-    ## 'slsn': [-30, 2.5,0.0], ## from Whalen et al. 2013
-    }
-absmags_dahlen_2012 = {
-    'iip': [-16.67, 1.12],
-    'iin': [-18.82, 0.92],
-    'iil': [-17.23, 0.38],
-    'ib' : [-19.38, 0.46],
-    'ic' : [-17.07, 0.49],
-    }
-    
-
-absmags=absmags_richardson_2014
-
-
-#absmag_new = {}
-#for key in absmags.keys(): absmag_new[key]=[absmags[key][0]-absmags[key][2],absmags[key][1],absmags[key][2]]
-#absmags=absmag_new
 
 # For color_cor_Ia, the reference filter is 551 nm (Bessell V-band)
 color_cor_Ia={
@@ -128,10 +105,13 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
         plot=False, verbose=False, review=False, biascor='flat',
-        subtype_combination='divide_average', vol_frac_set=None, cosmology=None):
+        subtype_combination='divide_average', vol_frac_set=None, cosmology=None,
+        absmag_set=None):
 
     # Resolve the subtype-fraction dict: per-call override, else module default.
     vol_frac_local = load_vol_frac(vol_frac_set) if vol_frac_set else vol_frac
+    # Resolve the absolute-magnitude dict: per-call override, else module default.
+    absmags_local = load_absmags(absmag_set) if absmag_set else absmags
     # Resolve cosmology: [H0, Om, Ol] from config, or {} to use module defaults.
     cosmo = cosmocalc.resolve_cosmology(cosmology)
 
@@ -170,7 +150,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
         if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
         observed_frame_lightcurve = zeros((len(array(rflc[best_rest_filter])),5))
-        observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags[type[0]][0]
+        observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags_local[type[0]][0]
     elif 'ia' not in type:
         if verbose: print('getting best rest-frame lightcurve...')
 
@@ -210,12 +190,12 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         #observed_frame_lightcurve = observed_frame_lightcurve -template_peak[type[0]]+absmags[type[0]][0]
 
         # Anchor composite light curve to your choice of mean peak absolute magnitude by shifting its 
-        # brightest point to absmags[type[0]][0]
-        observed_frame_lightcurve = observed_frame_lightcurve - nanmin(observed_frame_lightcurve[:,0]) + absmags[type[0]][0]
+        # brightest point to absmags_local[type[0]][0]
+        observed_frame_lightcurve = observed_frame_lightcurve - nanmin(observed_frame_lightcurve[:,0]) + absmags_local[type[0]][0]
 
         if review:
             plot_anchoring_diagnostic(observed_frame_lightcurve_unanchored, lc_normalized_to_0, observed_frame_lightcurve,
-                                      rest_age, type[0], diag_dir, absmags_richardson_2014)
+                                      rest_age, type[0], diag_dir, absmags_local)
 
     else:
         if verbose: print('getting best rest-frame lightcurve SNIA ...')
@@ -223,9 +203,9 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
         if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
         observed_frame_lightcurve = zeros((len(array(rflc[best_rest_filter])),5))
-        observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags[type[0]][0]
+        observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags_local[type[0]][0]
 
-    
+
     ### kcorrecting rest lightcurve
     if verbose: print('kcorrecting rest-frame lightcurve...')
 
@@ -306,7 +286,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
     start_time = time.time()
     if parallel:
         if verbose: print('... running parallel kcor by model SN age on %d processors' %Nproc)
-        run_kcor_x= partial(kcor, f1=f1, f2=f2, models_used_dict=models_used_dict, redshift=redshift, 
+        run_kcor_x= partial(kcor, f1=f1, f2=f2, models_used_dict=models_used_dict, redshift=redshift,
                             vega_spec=vega_spec, AB=False)
         pool = multiprocessing.Pool(processes=Nproc)
         result_list = pool.map(run_kcor_x, rest_age)
@@ -319,7 +299,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         obs_kcor=[]
         if verbose: print('... running serial kcor iterating over model SN age')
         for age in rest_age:
-            mkcor,skcor=kcor(age, f1,f2,models_used_dict,redshift,vega_spec)
+            mkcor,skcor=kcor(age, f1,f2,models_used_dict,redshift,vega_spec, AB=False)
             if verbose > 1: print(age,mkcor)
             obs_kcor.append([mkcor,skcor])
         obs_kcor=array(obs_kcor)
@@ -484,12 +464,12 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
             efficiency2=det_eff(delta_mag2,mc=sens, T=1.0, S=0.30)
 
                 
-            sig_m = absmags[type[0]][1]
+            sig_m = absmags_local[type[0]][1]
             ## Holz & Linder GL LumFunc smoothing
             sig_gl = 0.093*(redshift)
             sig_m = 1*sqrt(sig_m**2+sig_gl**2)
 
-            P_lum= scipy.stats.norm(absmags[type[0]][0],sig_m).pdf(absmags[type[0]][0]+dm)
+            P_lum= scipy.stats.norm(absmags_local[type[0]][0],sig_m).pdf(absmags_local[type[0]][0]+dm)
             if extinction:
                 if 'ia' in type:
                     P_ext = ext_dist_Ia(da, observed_filter, redshift, passskiprow, passwavemult, sndata_root)
@@ -524,8 +504,8 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
             lum_normalization += P_lum*dmstep
         ext_normalization += P_ext*dastep
     if plot:
-        ax3.plot(scipy.stats.norm(absmags[type[0]][0],sig_m).pdf(absmags[type[0]][0]+dmrange),
-                 absmags[type[0]][0]+dmrange+mu+ccn+apl_kcor[where(rest_age == min(abs(rest_age)))],
+        ax3.plot(scipy.stats.norm(absmags_local[type[0]][0],sig_m).pdf(absmags_local[type[0]][0]+dmrange),
+                 absmags_local[type[0]][0]+dmrange+mu+ccn+apl_kcor[where(rest_age == min(abs(rest_age)))],
                  'k-')
         ax3.set_xticks([])
         ax3.set_ylim(max(ymaxl),min(yminl))
@@ -550,7 +530,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
     elif biascor == 'malmquist':
         ## malmquist bias correction-- use this if going with some other measure of relative number
         if not 'ia' in type:
-            rel_lum = 10.**((absmags[type[0]][0]-(sens-mu+mean(apl_kcor)))/(-2.5))
+            rel_lum = 10.**((absmags_local[type[0]][0]-(sens-mu+mean(apl_kcor)))/(-2.5))
             rel_num = rel_lum**(-1.5)
         else:
             rel_num = 1.0
@@ -577,7 +557,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         xmax=(730.5*td)
         ax.plot(rest_age*td,apl_kcor+observed_frame_lightcurve[:,0]+mu+ccn,'r--')
         ax.axhline(sens, color='b', ls=':')
-        sig = sqrt(absmags[type[0]][1]**2.+obs_kcor[:,1]**2.)
+        sig = sqrt(absmags_local[type[0]][1]**2.+obs_kcor[:,1]**2.)
         ax.fill_between(rest_age*td, apl_kcor+observed_frame_lightcurve[:,0]+mu+ccn+sig,
                         apl_kcor+observed_frame_lightcurve[:,0]+mu+ccn-sig,
                         facecolor='red',alpha=0.3,interpolate=True)
@@ -594,8 +574,8 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         xmax=(730.5)
         ax2.plot(rest_age,observed_frame_lightcurve[:,0],'k-')
         ax2.fill_between(rest_age,
-                         observed_frame_lightcurve[:,0]+absmags[type[0]][1],
-                         observed_frame_lightcurve[:,0]-absmags[type[0]][1],
+                         observed_frame_lightcurve[:,0]+absmags_local[type[0]][1],
+                         observed_frame_lightcurve[:,0]-absmags_local[type[0]][1],
                          facecolor='black', alpha=0.3,interpolate=True)
         ax2.set_ylim(ymax,ymin)
         ax2.set_xlim(xmin,xmax)
@@ -1391,9 +1371,11 @@ def ext_dist(ext,observed_filter,redshift,passskiprow,passwavemult,sndata_root,R
     elif obs_extin=='steep':
         lambda_v= 5.36 #from HP02
         #lambda_v=9.72 #from HBD98
+    elif obs_extin=='kelly12':
+        lambda_v = 1 #from Kelly12
+    elif obs_extin=='arp299':
+        lambda_v = 0.025 ## nuclear region of Arp299, see ref. in Bondi et al. 2012
     else:## assuming 'shallow'
-        ## lambda_v = 1 #from Kelly12
-        ## lambda_v = 0.025 ## nuclear region of Arp299, see ref. in Bondi et al. 2012
         lambda_v =2.27 ## for dahlen 2012.
     f1 = sndata_root + '/filters/Bessell90/Bessell90_K09/Bessell90_V.dat'
     w1 = get_central_wavelength(f1, wavemult=0.1)/1e3

@@ -19,6 +19,8 @@
     "biascor" : "fractional",
     "_vol_frac_set_options" : "li_2011 | richardson_2014 | dahlen_2012",
     "vol_frac_set" : "li_2011",
+    "_absmag_set_options" : "li_2011 | richardson_2014 | dahlen_2012",
+    "absmag_set" : "richardson_2014",
     "_cosmology_comment" : "[H0 (km/s/Mpc), Omega_m, Omega_Lambda]",
     "cosmology" : [70, 0.3, 0.7],
     "_subtype_combination_options" : "forward | divide_average",
