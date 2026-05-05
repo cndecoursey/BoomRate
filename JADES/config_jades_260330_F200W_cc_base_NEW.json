@@ -44,6 +44,7 @@
     "_redshift_binning":[1.05, 1.92, 3.70, 5.41],
     "day_step":5,
     "abs_mag_step":0.1,
+    "lc_smoothing_window":3,
     "extinction_step":0.1,
     "box_tc": "true",
     
