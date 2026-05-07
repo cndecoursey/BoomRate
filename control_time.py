@@ -30,27 +30,7 @@ warnings.simplefilter("error",RuntimeWarning)
 rcParams['figure.figsize']=12,9
 rcParams['font.size']=16.0
 
-
-# Volumetric subtype fractions live in vol_fractions.json next to this module.
-_VOL_FRAC_FILE = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'vol_fractions.json')
-
-def load_vol_frac(name=None, path=None):
-    with open(path or _VOL_FRAC_FILE) as f:
-        data = json.load(f)
-    if name is None:
-        name = data.get('_default', 'li_2011')
-    if name not in data or name.startswith('_'):
-        raise KeyError("Unknown vol_frac_set %r; options: %s"
-                       % (name, [k for k in data if not k.startswith('_')]))
-    vf = {k: v for k, v in data[name].items() if not k.startswith('_')}
-    cc_keys = [k for k in vf if k not in ('ia', 'slsn')]
-    cc_sum  = sum([vf[k] for k in cc_keys])
-    if cc_sum > 0:
-        vf = {k: (v/cc_sum if k in cc_keys else v) for k, v in vf.items()}
-    return vf
-
-vol_frac = load_vol_frac()  # module-level default (li_2011)
-
+'''
 template_peak = { ##the assumed normalization for the SNANA templates
     'iip': -16.05,
     'iin': -17.05,
@@ -73,11 +53,11 @@ absmags_li_2011 = {
 
 absmags_richardson_2014 = {
     'iip': [-16.80, 0.97, 0.37],
-    #'iin': [-16.86, 1.61, 0.59],
+    'iib': [-17.03, 0.93, 0.45],
     'iin': [-18.62, 1.48, 0.32],
     'iil': [-17.98, 0.90, 0.34],
     'ib' : [-17.54, 0.94, 0.33],
-    'ic' : [-16.67, 1.04, 0.40],
+    'ic' : [-17.67, 1.04, 0.40],
     'ibc': [-16.67, 1.04, 0.40],
     'ia' : [-19.26, 0.51, 0.20],
     'slsn': [-21.7, 0.4,0.0], ## from Quimby+2013, by way of Gal-Yam 2018
@@ -90,9 +70,18 @@ absmags_dahlen_2012 = {
     'ib' : [-19.38, 0.46],
     'ic' : [-17.07, 0.49],
     }
+
+# Converted from Bessell B (Vega; Richardson+2014) to SDSS g
+absmags_sdss_g_AB = {
+    'iip': [-16.77, 0.97, 0.37],
+    'iil': [-18.12, 0.86, 0.40],
+    'iin': [-18.57, 1.48, 0.16],
+    'ib': [-17.56, 1.12, 0.40],
+    'ic': [-17.82, 1.18, 0.40],
+}
     
 
-absmags=absmags_richardson_2014
+absmags=absmags_sdss_g_AB
 
 
 #absmag_new = {}
@@ -121,22 +110,38 @@ color_cor_slsn={
     356: 2.0,
     472: 0.15,
     }
+'''
 
-
-def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
-        type, dstep=3, dmstep=0.5, dastep=0.5, lc_smoothing_window=3,
+def run(redshift, baseline, base_root, sndata_root, model_path, diag_dir,
+        type, m50=30, T=1.0, S=0.3, dstep=3, dmstep=0.5, dastep=0.5, lc_smoothing_window=3,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
         plot=False, verbose=False, review=False, biascor='flat',
-        subtype_combination='divide_average', vol_frac_set=None, cosmology=None):
+        cosmology=None,color_corrections=None, absmags=None, kcor_ref=None):
 
-    # Resolve the subtype-fraction dict: per-call override, else module default.
-    vol_frac_local = load_vol_frac(vol_frac_set) if vol_frac_set else vol_frac
+    print('--- absmags diagnostic ---')
+    print('type: %s' % type[0])
+    print('absmags mean: %.2f' % absmags[type[0]][0])
+    print('absmags sigma: %.2f' % absmags[type[0]][1])
+    print('--------------------------')
+
     # Resolve cosmology: [H0, Om, Ol] from config, or {} to use module defaults.
     cosmo = cosmocalc.resolve_cosmology(cosmology)
 
+    # Ensure you have the peak absolute magnitude for your subtype
+    if absmags is None:
+        raise ValueError(
+            "absmags is None -- peak absolute magnitudes must be passed "
+            "into control_time.run() via the absmags parameter."
+        )
+    if type[0] not in absmags:
+        raise ValueError(
+            "SN type '%s' not found in absmags. "
+            "Available types: %s" % (type[0], list(absmags.keys()))
+        )
+
     # Define the filters; important for later
-    if verbose: print('defining restframe sloan filters...')
+    #if verbose: print('defining restframe sloan filters...')
 
     # Build a dict that maps filter central wavelengths to filter file paths, which will
     # be used later to find the best matching rest-frame filter for the K-correction
@@ -151,7 +156,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
             filter_dict[elam]=sdss_filter
 
     # Observed filter
-    if verbose: print('observed filter...')
+    #if verbose: print('observed filter...')
     #if passband is not None:
     #    observed_filter = passband
     #else:
@@ -165,14 +170,14 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
 
     # Rest-frame Lightcurve
     if 'slsn'in type:
-        if verbose: print('getting best rest-frame lightcurve...')
+        #if verbose: print('getting best rest-frame lightcurve...')
         rest_age,rflc = rest_frame_slsn_lightcurve(dstep=dstep,verbose=verbose)
         best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
         if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
         observed_frame_lightcurve = zeros((len(array(rflc[best_rest_filter])),5))
         observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags[type[0]][0]
     elif 'ia' not in type:
-        if verbose: print('getting best rest-frame lightcurve...')
+        #if verbose: print('getting best rest-frame lightcurve...')
 
         # Load and interpolate non1a SED templates onto a uniform rest-frame age grid, keyed by filter central wavelength
         rest_age,rflc,models_used = rest_frame_lightcurve(type,model_path,sndata_root,dstep=dstep,verbose=verbose)
@@ -215,10 +220,10 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
 
         if review:
             plot_anchoring_diagnostic(observed_frame_lightcurve_unanchored, lc_normalized_to_0, observed_frame_lightcurve,
-                                      rest_age, type[0], diag_dir, absmags_richardson_2014)
+                                      rest_age, type[0], diag_dir, absmags)
 
     else:
-        if verbose: print('getting best rest-frame lightcurve SNIA ...')
+        #if verbose: print('getting best rest-frame lightcurve SNIA ...')
         rest_age, rflc = rest_frame_Ia_lightcurve(dstep=dstep,verbose=verbose)
         best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
         if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
@@ -227,12 +232,12 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
 
     
     ### kcorrecting rest lightcurve
-    if verbose: print('kcorrecting rest-frame lightcurve...')
+    #if verbose: print('kcorrecting rest-frame lightcurve...')
 
     model_pkl = 'SEDs_'+'_'.join(type)+'.pkl'
     if not os.path.isfile(model_pkl):
         pkl_file = open(model_pkl,'wb')
-        if verbose: print('... loading model SEDs')
+        #if verbose: print('... loading model SEDs')
         models_used_dict={}
         total_age_set=[]
         if 'ia' in type:
@@ -242,7 +247,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
             models_used = ['slsn_blackbody']
 
         for model in models_used:
-            print('...... %s' %model)
+            #print('...... %s' %model)
             if 'ia' not in type:
                 try:
                     data = loadtxt(os.path.join(model_path,model+'.SED'))
@@ -267,7 +272,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         pkl_file.close()
     else:
         pkl_file = open(model_pkl,'rb')
-        if verbose: print('reading %s saved file' %model_pkl)
+        #if verbose: print('reading %s saved file' %model_pkl)
         models_used_dict = pickle.load(pkl_file, encoding='latin1')
         pkl_file.close()
         total_age_set=[]
@@ -286,16 +291,39 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
     f2 = loadtxt(filter_dict[best_rest_filter])
 
     # Select the appropriate color correction dictionary based on SN type
-    if 'ia' in type:
-        color_cor = color_cor_Ia
-    elif 'slsn' in type:
-        color_cor = color_cor_slsn
-    else:
-        color_cor = color_cor_gen
+    #if 'ia' in type:
+    #    color_cor = color_cor_Ia
+    #elif 'slsn' in type:
+    #    color_cor = color_cor_slsn
+    #else:
+    #    color_cor = color_cor_gen
 
     # Finds the color correction dictionary key closest to best_rest_filter 
-    ccnl =  min(color_cor.keys(), key=lambda x:abs(x-best_rest_filter)) # redundant? or intentional?
-    ccn = color_cor[ccnl] ## color correcting filers...
+    #ccnl =  min(color_cor.keys(), key=lambda x:abs(x-best_rest_filter)) # redundant? or intentional?
+    #ccn = color_cor[ccnl] ## color correcting filers...
+
+    if color_corrections is None:
+        raise ValueError(
+            "color_corrections is None -- a color correction file must be "
+            "specified in the config via 'color_correction_file'."
+        )
+    if type[0] not in color_corrections:
+        raise ValueError(
+            "SN type '%s' not found in color corrections file. "
+            "Available types: %s" % (type[0], list(color_corrections.keys()))
+        )
+
+    # Get the color correction at peak relative to SDSS g-band
+    # This color_correction dictionary is loaded in by rate_calculator from the 
+    # file specified in the config file
+    color_cor = color_corrections[type[0]]
+    ccnl = min(color_cor.keys(), key=lambda x: abs(x-best_rest_filter))
+    ccn  = color_cor[ccnl]
+
+    print('best_rest_filter: %d nm' % best_rest_filter)
+    print('ccn: %.3f mag' % ccn)
+    print('N models in mag_dict[best_rest_filter]: %d' % len(rflc[best_rest_filter]))
+    print('models_used:', models_used)
 
 
     if redshift > 1.5:
@@ -305,9 +333,9 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
 
     start_time = time.time()
     if parallel:
-        if verbose: print('... running parallel kcor by model SN age on %d processors' %Nproc)
+        #if verbose: print('... running parallel kcor by model SN age on %d processors' %Nproc)
         run_kcor_x= partial(kcor, f1=f1, f2=f2, models_used_dict=models_used_dict, redshift=redshift, 
-                            vega_spec=vega_spec, AB=False)
+                            vega_spec=vega_spec, kcor_ref=kcor_ref)
         pool = multiprocessing.Pool(processes=Nproc)
         result_list = pool.map(run_kcor_x, rest_age)
         # Convert result_list into a 2D numpy array of shape (N_ages, 2) 
@@ -317,13 +345,13 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
 
     else:
         obs_kcor=[]
-        if verbose: print('... running serial kcor iterating over model SN age')
+        #if verbose: print('... running serial kcor iterating over model SN age')
         for age in rest_age:
-            mkcor,skcor=kcor(age, f1,f2,models_used_dict,redshift,vega_spec)
+            mkcor,skcor=kcor(age, f1,f2,models_used_dict,redshift,vega_spec, kcor_ref=kcor_ref)
             if verbose > 1: print(age,mkcor)
             obs_kcor.append([mkcor,skcor])
         obs_kcor=array(obs_kcor)
-    if verbose: print('kcor processing time = %2.1f seconds'%(time.time()-start_time))
+    #if verbose: print('kcor processing time = %2.1f seconds'%(time.time()-start_time))
 
     
     ### try a low-order smooth over kcor for valid points, then extrapolate
@@ -356,6 +384,10 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
     # d is luminosity distance, mu is distance modulus, td is (1+z)
     d, mu, peak = cosmocalc.run(redshift, **cosmo)
     td = (1.+redshift)
+
+    print('peak apparent mag: %.2f' % nanmin(apl_kcor + observed_frame_lightcurve[:,0] + mu + ccn))
+    print('m50: %.2f' % m50)
+    print('peak - m50: %.2f mag' % (nanmin(apl_kcor + observed_frame_lightcurve[:,0] + mu + ccn) - m50))
 
     ## control times
     # Initialize four empty lists that will store the light curve magnitude and K-correction 
@@ -422,20 +454,67 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         yminl=[]
         ymaxl=[]
 
+    # Retrieve the intrinsic scatter in peak absolute magnitude for this SN subtype 
+    sig_m = absmags[type[0]][1]
+    ## Holz & Linder GL LumFunc smoothing
+    # Compute the gravitational lensing magnification scatter from Holz & Linder (2005)
+    # At high redshift, random gravitational lensing by intervening matter along the line 
+    # of sight introduces additional scatter in the apparent brightness of SNe — some lines 
+    # of sight pass through more mass and get magnified, others get demagnified
+    sig_gl = 0.093*(redshift)
+    # Combine the intrinsic luminosity scatter and gravitational lensing scatter in 
+    # quadrature to get the total magnitude scatter
+    sig_m = 1*sqrt(sig_m**2+sig_gl**2)
+
+    # Get the Calzetti Law ratio between AL and Av, where AL is the Calzetti extinction in the 
+    # restframe filter closest to your blueshifted observed frame filter at your redshift
+    AL_over_Av_calzetti_ratio = get_Av_over_AL_calzetti_ratio(observed_filter=observed_filter,redshift=redshift,
+                                                          passskiprow=passskiprow,passwavemult=passwavemult,
+                                                          sndata_root=sndata_root,Rv=4.05)
+
     # Loop on extinction function
     # ext_normalization accumulates the integral of the extinction probability distribution for normalization later
     ext_normalization=0.0
     if extinction:
         dastep = dastep
         # Integrate over host galaxy extinction values from 0 to 10 magnitudes in steps of dastep
-        darange = arange(0.,10.0+dastep,dastep)
+        # da values are Av values 
+        #darange = arange(0.,10.0+dastep,dastep)
+        darange = arange(0.,5.0+dastep,dastep)
     else:
         dastep = 1.0
         darange = [0.]
 
-    # Outer loop over extinction values. da is the host galaxy extinction in magnitudes (A_V or similar) 
+    if review:
+        # plot light curve stages for the first da/dm combination only
+        _first_iteration = True
+
+    # Outer loop over extinction values. da is the host galaxy extinction in magnitudes (Av) 
     # applied uniformly to all filters via the Calzetti law later.
     for da in darange:
+
+        # Convert Av to AL, where AL is your extinction in your rest-frame filter
+        #AL=Av_to_AL(Av=da,observed_filter=observed_filter,redshift=redshift,passskiprow=passskiprow,
+        #            passwavemult=passwavemult, sndata_root=sndata_root,Rv=4.05)
+        AL = da * AL_over_Av_calzetti_ratio 
+
+        # Compute a physically motivated extinction probability weight P_ext for the current da value
+        # P_ext is the probability that a SN of this type has host galaxy extinction equal to da magnitudes
+        # obs_extin controls the shape of the host galaxy extinction probability distribution
+        # It weights the control time contribution from SNe with this particular extinction — highly 
+        # extincted SNe (da large) get low weight if such high extinctions are rare for this SN type, 
+        # while moderately extincted SNe get higher weight.
+        if extinction:
+            if 'ia' in type:
+                P_ext = ext_dist_Ia(da, observed_filter, redshift, passskiprow, passwavemult, sndata_root)
+            else:
+                # Get the host extinction probability
+                #P_ext = ext_dist(da,observed_filter,redshift,passskiprow,
+                #                 passwavemult,sndata_root,obs_extin=obs_extin)#, Rv=8.0)
+                P_ext = prob_Av(Av=da, obs_extin='kelly')
+        else:
+            P_ext=1.0
+        ext_normalization += P_ext*dastep
 
         # Loop on luminosity function
         # Inner loop over absolute magnitude offsets from -5 to +5 mag in steps of dmstep. 
@@ -443,9 +522,22 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         # SNe than the mean, positive values represent fainter ones. lum_normalization 
         # accumulates the integral of the luminosity function for normalization.
         dmstep=dmstep
-        dmrange=arange(-5,5+dmstep,dmstep)
+        #dmrange=arange(-5,5+dmstep,dmstep)
+        dmrange=arange(round(-3*sig_m-dmstep,1), round(3*sig_m+dmstep,1), dmstep)
         lum_normalization=0.0
         for dm in dmrange:
+
+            if review and _first_iteration and abs(dm) < dmstep/2.:
+                plot_lightcurve_stages(
+                    rest_age=rest_age,
+                    observed_frame_lightcurve=observed_frame_lightcurve,
+                    apl_kcor=apl_kcor,
+                    mu=mu, ccn=ccn, da=da, dm=dm,
+                    sens=m50, type=type[0],
+                    redshift=redshift,
+                    diag_dir=diag_dir)
+                _first_iteration = False
+
             # Convert the current epoch light curve from magnitudes to fluxes
             # The magnitude at each age is:
             # m = apl_kcor + observed_frame_lightcurve[:,0] + mu + dm + da + ccn
@@ -454,13 +546,13 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
             # observed_frame_lightcurve[:,0] — rest-frame absolute magnitude from templates
             # mu — distance modulus converting absolute to apparent magnitude
             # dm — luminosity function offset
-            # da — host galaxy extinction
+            # AL — host galaxy extinction (converted from Av to your nearest restframe filter, A_Lambda)
             # ccn — color correction
             # This gives the apparent flux of the SN as it would appear through the observed JWST filter at each age
-            f1 = 10**(-2./5.*(apl_kcor+observed_frame_lightcurve[:,0]+mu+dm+da+ccn))
+            f1 = 10**(-2./5.*(apl_kcor+observed_frame_lightcurve[:,0]+mu+dm+AL+ccn))
             # Same conversion but for the previous epoch light curve (one baseline ago)
             # This is what the reference image contains — the SN flux at the previous observation
-            f2 = 10**(-2./5.*(template_kcor+template_light_curve+mu+dm+da+ccn))
+            f2 = 10**(-2./5.*(template_kcor+template_light_curve+mu+dm+AL+ccn))
             # Compute the flux difference between the current epoch and the previous epoch. 
             # This is what a difference imaging pipeline actually detects
             # A positive diff_f means the SN got brighter since the last epoch (rising or near peak), 
@@ -471,33 +563,30 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
             tdx = where(diff_f>0)
             delta_mag[tdx]=-2.5*log10(diff_f[tdx])
             delta_mag[where(diff_f<=0)]=99.99
-            ## efficiency=det_eff(delta_mag,mc=sens,T=0.96, S=0.38) ## for GOODS
-            efficiency=det_eff(delta_mag,mc=sens,T=1.0, S=0.30)
 
-            f3 = 10**(-2./5.*(prev_kcor+prev_light_curve+mu+dm+da+ccn))
+            # Obtain the detection efficiency for delta_mag using the best-fit m50 and S values
+            # that were previously obtained by fitting your input detection efficiency curve
+            efficiency=det_eff(delta_mag, mc=m50, T=T, S=S)
+            ## efficiency=det_eff(delta_mag,mc=m50,T=0.96, S=0.38) ## for GOODS
+
+            # Compute detection efficiency based on SN brightness relative to two baselines ago
+            # This avoids double-counting sources in rolling surveys
+            f3 = 10**(-2./5.*(prev_kcor+prev_light_curve+mu+dm+AL+ccn))
             diff_f2 = (f2 - f3)
             delta_mag2 = zeros(diff_f2.shape)
             tdx = where(diff_f2 > 0)
             delta_mag2[tdx]=-2.5*log10(diff_f2[tdx])
             delta_mag2[where(diff_f2<=0)]=99.99
-            ## efficiency2=det_eff(delta_mag2,mc=sens, T=0.96, S=0.38) ## for GOODS
-            efficiency2=det_eff(delta_mag2,mc=sens, T=1.0, S=0.30)
+            ## efficiency2=det_eff(delta_mag2,mc=m50, T=0.96, S=0.38) ## for GOODS
+            efficiency2=det_eff(delta_mag2,mc=m50, T=T, S=S)
 
-                
-            sig_m = absmags[type[0]][1]
-            ## Holz & Linder GL LumFunc smoothing
-            sig_gl = 0.093*(redshift)
-            sig_m = 1*sqrt(sig_m**2+sig_gl**2)
-
+            # Evaluate the luminosity function probability at this dm offset. This creates a Gaussian 
+            # distribution centered on the mean peak absolute magnitude absmags[type[0]][0] with 
+            # width sig_m, then evaluates its probability density at absmags[type[0]][0]+dm. 
+            # So P_lum is the probability that a SN of this type has a peak absolute magnitude offset 
+            # of dm from the mean — it's the weight applied to the control time contribution from SNe 
+            # with this particular luminosity. 
             P_lum= scipy.stats.norm(absmags[type[0]][0],sig_m).pdf(absmags[type[0]][0]+dm)
-            if extinction:
-                if 'ia' in type:
-                    P_ext = ext_dist_Ia(da, observed_filter, redshift, passskiprow, passwavemult, sndata_root)
-                else:
-                    P_ext = ext_dist(da,observed_filter,redshift,passskiprow,
-                                     passwavemult,sndata_root,obs_extin=obs_extin)#, Rv=8.0)
-            else:
-                P_ext=1.0
 
             if plot:
                 yminl.append(min(apl_kcor+observed_frame_lightcurve[:,0]+mu+da+dm+ccn)-2.0)
@@ -521,8 +610,10 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
                 tot_ctrl += nansum(efficiency[idx])*P_lum*P_ext*dstep*dmstep*dastep
             else:
                 tot_ctrl += nansum(efficiency)*P_lum*P_ext*dstep*dmstep*dastep
+
             lum_normalization += P_lum*dmstep
-        ext_normalization += P_ext*dastep
+            
+        
     if plot:
         ax3.plot(scipy.stats.norm(absmags[type[0]][0],sig_m).pdf(absmags[type[0]][0]+dmrange),
                  absmags[type[0]][0]+dmrange+mu+ccn+apl_kcor[where(rest_age == min(abs(rest_age)))],
@@ -530,11 +621,20 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         ax3.set_xticks([])
         ax3.set_ylim(max(ymaxl),min(yminl))
         #≈ßax3.invert_yaxis()
-        ax1.axhline(sens, color='blue', ls=':')
-        ax1.hlines(y=sens-1.5,  xmin=0, xmax=baseline/td, color='purple', lw=3)
+        ax1.axhline(m50, color='blue', ls=':')
+        ax1.hlines(y=m50-1.5,  xmin=0, xmax=baseline/td, color='purple', lw=3)
         tight_layout(); savefig('efficiencies.png')
 
+    #print("="*60)
+    #print('tot_ctrl before normalization: %.4f days' % tot_ctrl)
+    #print('lum_normalization: %.4f' % lum_normalization)
+    #print('ext_normalization: %.4f' % ext_normalization)
+    #print('tot_ctrl after normalization: %.4f days' % (tot_ctrl/(lum_normalization*ext_normalization)))
+    #print('tot_ctrl after normalization (years): %.4f' % (tot_ctrl/(lum_normalization*ext_normalization)/365.25))
+    #print("="*60)
     tot_ctrl=tot_ctrl/(lum_normalization*ext_normalization)
+    return tot_ctrl/365.25
+    '''
     print('Correcting control time %.4f days by %s relative number' %(tot_ctrl, biascor))
     if biascor == 'fractional':
         ## fractional bias correction-- The relative number of each subtype one would expect in a volume
@@ -550,7 +650,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
     elif biascor == 'malmquist':
         ## malmquist bias correction-- use this if going with some other measure of relative number
         if not 'ia' in type:
-            rel_lum = 10.**((absmags[type[0]][0]-(sens-mu+mean(apl_kcor)))/(-2.5))
+            rel_lum = 10.**((absmags[type[0]][0]-(m50-mu+mean(apl_kcor)))/(-2.5))
             rel_num = rel_lum**(-1.5)
         else:
             rel_num = 1.0
@@ -576,7 +676,7 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         xmin=(-50*td)
         xmax=(730.5*td)
         ax.plot(rest_age*td,apl_kcor+observed_frame_lightcurve[:,0]+mu+ccn,'r--')
-        ax.axhline(sens, color='b', ls=':')
+        ax.axhline(m50, color='b', ls=':')
         sig = sqrt(absmags[type[0]][1]**2.+obs_kcor[:,1]**2.)
         ax.fill_between(rest_age*td, apl_kcor+observed_frame_lightcurve[:,0]+mu+ccn+sig,
                         apl_kcor+observed_frame_lightcurve[:,0]+mu+ccn-sig,
@@ -604,7 +704,162 @@ def run(redshift, baseline, sens, base_root, sndata_root, model_path, diag_dir,
         tight_layout()
         savefig('lightcurves.png')
     return(tot_ctrl/365.25)
-    
+    '''
+
+def plot_lightcurve_stages(rest_age, observed_frame_lightcurve, apl_kcor,
+                           mu, ccn, da, dm, sens, type, redshift, diag_dir):
+    """
+    Plots the representative light curve at four stages of transformation:
+    (1) Rest-frame absolute magnitude + luminosity function offset (dm)
+    (2) After color correction (rest-frame, absolute)
+    (3) After K-correction + distance modulus (apparent magnitude)
+    (4) After host galaxy extinction (final observed apparent magnitude)
+
+    Also shows the survey magnitude limit as a horizontal dashed line so
+    the detectable phase is immediately visible at each stage.
+
+    Parameters
+    ----------
+    rest_age : numpy.ndarray
+        1D array of rest-frame ages in days.
+    observed_frame_lightcurve : numpy.ndarray
+        2D array of shape (N_ages, 5) — the anchored representative
+        light curve from mean_pop(), column 0 is the median magnitude.
+    apl_kcor : numpy.ndarray
+        1D array of shape (N_ages,) — the smoothed K-correction.
+    mu : float
+        Distance modulus at this redshift.
+    ccn : float
+        Color correction in magnitudes for the best rest-frame filter.
+    da : float
+        Host galaxy extinction in magnitudes (A_V).
+    dm : float
+        Luminosity function offset in magnitudes.
+    sens : float
+        Survey magnitude limit (detection threshold).
+    type : list of str
+        SN subtype list (e.g. ['iip']).
+    redshift : float
+        Redshift of the current bin.
+    diag_dir : str
+        Path to the diagnostic plots directory.
+    """
+    fig, axes = subplots(2, 2, figsize=(14, 10))
+    axes = axes.flatten()
+
+    # compute light curve at each stage
+    lc = observed_frame_lightcurve[:,0]
+    valid = lc < 50.
+
+    # stage 1: rest-frame absolute magnitude + luminosity function offset
+    stage1 = lc + dm
+    # stage 2: after color correction (still rest-frame absolute)
+    stage2 = lc + dm + ccn
+    # stage 3: after K-correction + distance modulus (now apparent magnitude)
+    stage3 = lc + dm + ccn + apl_kcor + mu
+    # stage 4: after host galaxy extinction (final apparent magnitude)
+    stage4 = lc + dm + ccn + apl_kcor + mu + da
+
+    stages = [stage1, stage2, stage3, stage4]
+    titles = [
+        '(1) Rest-frame absolute magnitude + dm',
+        '(2) After color correction',
+        '(3) After K-correction + distance modulus',
+        '(4) After host galaxy extinction'
+    ]
+    ylabels = [
+        'Absolute magnitude',
+        'Absolute magnitude',
+        'Apparent magnitude',
+        'Apparent magnitude'
+    ]
+
+    # parameter text to display in each panel
+    panel_params = [
+        # panel 1: base light curve + luminosity function offset
+        [
+            'SN type: %s' % type,
+            'z = %.3f' % redshift,
+            'dm = %+.2f mag' % dm,
+            'M_peak = %.2f mag' % (min(lc[valid]) + dm),
+        ],
+        # panel 2: color correction
+        [
+            'ccn = %+.2f mag' % ccn,
+            'dm = %+.2f mag' % dm,
+            'M_peak (color corrected) = %.2f mag' % (min(lc[valid]) + dm + ccn),
+        ],
+        # panel 3: K-correction + distance modulus
+        [
+            'mu = %.2f mag' % mu,
+            'mean K-cor = %.2f mag' % nanmean(apl_kcor[isfinite(apl_kcor)]),
+            'K-cor range = [%.2f, %.2f] mag' % (nanmin(apl_kcor[isfinite(apl_kcor)]),
+                                                  nanmax(apl_kcor[isfinite(apl_kcor)])),
+            'survey limit = %.1f mag' % sens,
+        ],
+        # panel 4: host galaxy extinction
+        [
+            'da (A_V) = %.2f mag' % da,
+            'mu = %.2f mag' % mu,
+            'ccn = %+.2f mag' % ccn,
+            'dm = %+.2f mag' % dm,
+            'survey limit = %.1f mag' % sens,
+        ],
+    ]
+
+    for ax, stage, title, ylabel, params in zip(axes, stages, titles,
+                                                 ylabels, panel_params):
+        # plot light curve
+        valid_stage = valid & isfinite(stage)
+        ax.plot(rest_age[valid_stage], stage[valid_stage],
+                'k-', lw=2, label='Median light curve')
+
+        # shade 1-sigma range
+        sig = observed_frame_lightcurve[:,1]
+        ax.fill_between(rest_age[valid_stage],
+                        stage[valid_stage] - sig[valid_stage],
+                        stage[valid_stage] + sig[valid_stage],
+                        alpha=0.2, color='blue', label='1-sigma template spread')
+
+        # show survey magnitude limit for apparent magnitude panels
+        if 'apparent' in ylabel.lower():
+            ax.axhline(sens, color='red', ls='--', lw=1.5,
+                       label='Survey limit = %.1f mag' % sens)
+
+            # shade the detectable region
+            detectable = valid_stage & (stage < sens)
+            if sum(detectable) > 0:
+                ax.fill_between(rest_age, sens, stage,
+                                where=detectable,
+                                alpha=0.15, color='green',
+                                label='Detectable region')
+
+        # add parameter text box in upper right
+        param_text = '\n'.join(params)
+        ax.text(0.97, 0.97, param_text,
+                transform=ax.transAxes,
+                fontsize=8,
+                verticalalignment='top',
+                horizontalalignment='right',
+                bbox=dict(boxstyle='round,pad=0.4',
+                          facecolor='wheat',
+                          alpha=0.8))
+
+        ax.set_xlabel('Rest-frame age (days)', fontsize=10)
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_xlim(-50, 200)
+        ax.invert_yaxis()
+        ax.legend(fontsize=8, loc='lower right')
+        ax.set_title(title, fontsize=10)
+        ax.grid(alpha=0.3)
+
+    fig.suptitle('%s at z=%.2f' % ('_'.join(type), redshift),
+                 fontsize=12, y=1.01)
+    tight_layout()
+    savefig('%s/%s_z%.2f_lc_stages.png' % (
+            diag_dir, type, redshift),
+            bbox_inches='tight')
+    clf()
 
 def plot_kcor_diagnostic(rest_age, obs_kcor, obs_kcor_smoothed, type, best_rest_filter, redshift, diag_dir):
     """
@@ -736,8 +991,7 @@ def plot_anchoring_diagnostic(lc_smoothed, lc_normalized, lc_anchored, rest_age,
     diag_dir : str
         'diagnostic_plots/<run_name>/', used for output filename.
     absmags : dict
-        Dictionary of mean peak absolute magnitudes from Richardson 2014,
-        keyed by SN subtype.
+        Dictionary of mean peak absolute magnitudes, keyed by SN subtype.
     """
     fig, ax = subplots(1, 1, figsize=(10, 14))
 
@@ -747,12 +1001,12 @@ def plot_anchoring_diagnostic(lc_smoothed, lc_normalized, lc_anchored, rest_age,
     ax.plot(rest_age, lc_normalized[:,0], 'g-', lw=1.5, alpha=0.7,
             label='Normalized to peak = 0.0 mag')
     ax.plot(rest_age, lc_anchored[:,0], 'r-', lw=2,
-            label='Anchored to Richardson 2014 peak = %.2f mag' % absmags[type][0])
+            label='Anchored to peak = %.2f mag' % absmags[type][0])
 
     # reference lines
     ax.axhline(0.0, color='gray', ls=':', lw=1, alpha=0.5, label='0.0 mag reference')
     ax.axhline(absmags[type][0], color='red', ls=':', lw=1, alpha=0.5,
-               label='Richardson 2014 peak = %.2f mag' % absmags[type][0])
+               label='peak = %.2f mag' % absmags[type][0])
 
     ax.set_xlabel('Rest-frame age (days)')
     ax.set_ylabel('Absolute magnitude')
@@ -1113,7 +1367,7 @@ def slsn_lc(xt, tm=29.94, b14=3.82, pms=1.0):
   
     
 
-def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, AB=False):
+def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, kcor_ref=None):
     """
     Computes the K-correction at a single rest-frame age by integrating
     SN SED templates through the observed and rest-frame filters. The
@@ -1172,6 +1426,11 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
         at this age, e.g. if no templates have spectra near best_age
         or if all flux integrals are zero or negative.
     """
+
+    # Require kcor ref to be set
+    if kcor_ref is None:
+        raise ValueError("kcor reference system must be set to either Vega or AB")
+
 
     import warnings#,exceptions
     
@@ -1285,12 +1544,15 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             # yy[idx2] — rest-frame SN SED flux F_SN(lambda)
             # my_nanmean(diff(xx[idx2])) — mean wavelength step dlambda
             # This represents the flux you would observe from this SN through your JWST filter.
-            if AB:
+            if kcor_ref == 'AB':
                 # MAY NEED TO CHANGE BACK LATER
-                #synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
-                synth_obs = sum(array(restf1)/xx[idx2]*yy[idx2])*my_nanmean(diff(xx[idx2]))
-            else:
+                synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2])) # original
+                #synth_obs = sum(array(restf1)/xx[idx2]*yy[idx2])*my_nanmean(diff(xx[idx2])) # same as synth_AB
+                #synth_obs = sum(array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
+            elif kcor_ref == 'Vega':
                 synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
+            else:
+                raise ValueError("kcor reference system must be set to either Vega or AB")
 
             # Find the indices of the extended SED that fall within the wavelength range 
             # of the rest-frame filter f2 (this time without any blueshifting, since f2 
@@ -1303,11 +1565,12 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             # This is what you would observe if you could observe the SN directly through 
             # the rest-frame filter without any redshift — essentially the "idealized" flux that 
             # the templates were calibrated in
-            if AB:
+            if kcor_ref == 'AB':
                 # MAY NEED TO CHANGE THIS BACK LATER
-                #nearest_obs = sum(xx[idx3]*array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3]))
-                nearest_obs = sum(array(restf2)/xx[idx3]*yy[idx3])*my_nanmean(diff(xx[idx3]))
-            else:
+                nearest_obs = sum(xx[idx3]*array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3])) #original
+                #nearest_obs = sum(array(restf2)/xx[idx3]*yy[idx3])*my_nanmean(diff(xx[idx3])) # same as nearest_AB
+                #nearest_obs = sum(array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3]))
+            elif kcor_ref == 'Vega':
                 nearest_obs = sum(xx[idx3]*array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3]))
 
         else:
@@ -1315,16 +1578,18 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             ## this would work fine, except at redshifts where the observed filter does not overlap the template spectra
             idx2 = where((spec[idx][:,1]>=min(f1[:,0]/(1+redshift)))&(spec[idx][:,1]<=max(f1[:,0]/(1+redshift))))
             (junk,restf1) = u.recast(spec[idx][idx2][:,1],0.,f1[:,0]/(1+redshift),f1[:,1])
-            if AB:
+            if kcor_ref == 'AB':
+                synth_obs = sum(spec[idx][idx2][:,1]*array(restf1)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
+            elif kcor_ref == 'Vega':
                 synth_obs = sum(spec[idx][idx2][:,1]*array(restf1)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
             else:
-                synth_obs = sum(spec[idx][idx2][:,1]*array(restf1)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
+                raise ValueError("kcor reference system must be set to either Vega or AB")
         
             idx2 = where((spec[idx][:,1]>=min(f2[:,0]))&(spec[idx][:,1]<=max(f2[:,0])))
             (junk,restf2) = u.recast(spec[idx][idx2][:,1],0.,f2[:,0],f2[:,1])
-            if AB:
+            if kcor_ref == 'AB':
                 nearest_obs = sum(spec[idx][idx2][:,1]*array(restf2)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
-            else:
+            elif kcor_ref == 'Vega':
                 nearest_obs = sum(spec[idx][idx2][:,1]*array(restf2)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
 
             ## synth_obs = sum(spec[idx][idx2][:,1]*array(restf1)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
@@ -1332,13 +1597,15 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             ## (junk,restf2) = u.recast(spec[idx][idx2][:,1],0.,f2[:,0],f2[:,1])
             ## nearest_obs = sum(spec[idx][idx2][:,1]*array(restf2)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
 
-        if AB:
+        if kcor_ref == 'AB':
             try:
-                kc = -1*(-2.5*log10(1.+redshift)+2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_AB/nearest_AB))
+                #kc = -1*(-2.5*log10(1.+redshift)+2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_AB/nearest_AB)) # has sign error
+                #kc = -1*(2.5*log10(1.+redshift)+2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_AB/nearest_AB)) # same as below but written differently
+                kc = 2.5*np.log10((1./(1.+redshift)) * (nearest_obs * synth_AB) / (nearest_AB * synth_obs))
             except:
                 # float('Nan')
                 kc = float('Nan')
-        else:
+        elif kcor_ref == 'Vega':
             try:
                 kc = -1*(2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_vega/nearest_vega))
             except:
@@ -1404,6 +1671,46 @@ def ext_dist(ext,observed_filter,redshift,passskiprow,passwavemult,sndata_root,R
     AL = ext*A_2/A_1
     PAL = abs(1/lambda_v)*scipy.stats.expon.pdf(AL,scale=1/lambda_v)
     return(PAL[0])
+
+
+def get_Av_over_AL_calzetti_ratio(observed_filter,redshift,passskiprow,passwavemult,sndata_root,Rv=4.05):
+    V_trans = sndata_root + '/filters/Bessell90/Bessell90_K09/Bessell90_V.dat'
+    wave_v = get_central_wavelength(V_trans, wavemult=0.1)/1e3
+    wave_obs = get_central_wavelength(observed_filter, skip=passskiprow, wavemult=passwavemult)/1e3#/(1.0+redshift)
+    wave_rest = wave_obs / (1.0+redshift)
+    #A_1 = calzetti(array([w1]),Rv=Rv)
+    #A_2 = calzetti(array([w2]),Rv=Rv)
+    Av_calzetti = calzetti(array([wave_v]),Rv=Rv)
+    AL_calzetti = calzetti(array([wave_rest]),Rv=Rv)
+
+    return AL_calzetti / Av_calzetti
+
+    #AL = Av*AL_calzetti/Av_calzetti # using the calzetti ratio to convert Av to AL
+    #PAL = abs(1/lambda_v)*scipy.stats.expon.pdf(AL,scale=1/lambda_v)
+    #return AL
+    #return(PAL[0])
+
+def prob_Av(Av, obs_extin='nominal'):
+    from scipy.optimize import curve_fit
+
+    if obs_extin=='nominal': #shallowest
+        lambda_v = 0.187
+    elif obs_extin=='steep':
+        lambda_v= 5.36 #from HP02
+        #lambda_v=9.72 #from HBD98
+    elif obs_extin =='shallow':
+        lambda_v = 2.27 # Dahlen 2012
+    elif obs_extin == 'kelly':
+        lambda_v = 1 # from Kelly 2012
+    elif obs_extin == 'arp299':
+        lambda_v = 0.025 ## nuclear region of Arp299, see ref. in Bondi et al. 2012
+    else:
+        raise ValueError("Invalid extinction distribution provided")
+
+
+    #PAv = abs(1/lambda_v)*scipy.stats.expon.pdf(Av,scale=1/lambda_v)
+    PAv = scipy.stats.expon.pdf(Av,scale=1/lambda_v)
+    return PAv
 
 def ext_dist_ccsn_old(ext,observed_filter,redshift,passskiprow, passwavemult,obs_extin='nominal',observed=False):
     
@@ -1473,7 +1780,7 @@ if __name__=='__main__':
     #types = ['slsn']
     redshift = 1.0
     baseline = 365
-    sens = 29.8
+    m50 = 29.8
     dstep=5.0 ## in days, probably shouldn't adjust
     dmstep=0.5 ## in magnitude
     dastep=0.5 ## in magnitude
@@ -1505,15 +1812,15 @@ if __name__=='__main__':
     for type in types:
         type=[type]
         if box_tc :
-            tc1=run(redshift-0.2,baseline,sens,type=type,dstep=dstep,dmstep=dmstep,dastep=dastep,verbose=verbose,plot=plot,parallel=parallel,Nproc=Nproc, prev=previous, extinction=extinction)
-            tc2=run(redshift+0.2,baseline,sens,type=type,dstep=dstep,dmstep=dmstep,dastep=dastep,verbose=verbose,plot=plot,parallel=parallel,Nproc=Nproc, prev=previous, extinction=extinction, biascor=biascor)
+            tc1=run(redshift-0.2,baseline,m50,type=type,dstep=dstep,dmstep=dmstep,dastep=dastep,verbose=verbose,plot=plot,parallel=parallel,Nproc=Nproc, prev=previous, extinction=extinction)
+            tc2=run(redshift+0.2,baseline,m50,type=type,dstep=dstep,dmstep=dmstep,dastep=dastep,verbose=verbose,plot=plot,parallel=parallel,Nproc=Nproc, prev=previous, extinction=extinction, biascor=biascor)
             xx =array([redshift - 0.2, redshift+0.2])
             yy = array([tc1,tc2])
             p0=[1.0,0.0]
             pout = curve_fit(fline,xx,yy,p0=p0)[0]
             tc = quad(fline2,xx[0],xx[1],args=tuple(pout))[0]/diff(xx)
         else:
-            tc=run(redshift,baseline,sens,type=type,dstep=dstep,dmstep=dmstep,dastep=dastep,verbose=verbose,plot=plot,parallel=parallel,Nproc=Nproc, prev=previous, extinction=extinction, biascor=biascor)#, obs_extin='extra')
+            tc=run(redshift,baseline,m50,type=type,dstep=dstep,dmstep=dmstep,dastep=dastep,verbose=verbose,plot=plot,parallel=parallel,Nproc=Nproc, prev=previous, extinction=extinction, biascor=biascor)#, obs_extin='extra')
             tc_tot+=tc
     print("Total Control Time = %2.4f years" %(tc_tot))
     nevents = tc*dvol*area*rate*multiplier

@@ -1,0 +1,15 @@
+# Peak absolute magnitudes in SDSS g-band (AB)
+# Converted from Richardson+2014 Bessell B-band (Vega)
+# using synthetic photometry from SED pkl templates
+#
+# Convention: mean_mag is the mean peak absolute magnitude
+#             sigma is the 1-sigma luminosity function width
+#             scatter is the additional intrinsic scatter
+#
+# sntype  mean_mag  sigma  scatter
+#
+iip  -16.769  0.970  0.370
+iil  -18.120  0.900  0.340
+iin  -18.575  1.480  0.320
+ib  -17.647  0.940  0.330
+ic  -17.826  1.040  0.400

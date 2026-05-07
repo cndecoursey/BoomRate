@@ -25,13 +25,14 @@ import json, logging
 import pandas as pd
 from scipy import stats
 from astropy.convolution import convolve, Gaussian1DKernel
+import astropy.io.ascii as ascii
 
 
 
 
 # Volumetric subtype fractions are loaded by control_time from vol_fractions.json
 # (see 'vol_frac_set' in the config).
-
+'''
 absmags_li_2011 = {
     'iip': [-15.66, 1.23, 0.16],
     'iin': [-16.86, 1.61, 0.59],
@@ -66,6 +67,7 @@ absmags_dahlen_2012 = {
 
 absmags=absmags_richardson_2014
 verbose = True
+'''
 
 #absmag_new = {}
 #for key in absmags.keys(): absmag_new[key]=[absmags[key][0]-absmags[key][2],absmags[key][1],absmags[key][2]]
@@ -77,11 +79,11 @@ def snrates(z,*p):
     k = 0.007 ## for low-mass core-collapse supernovaae
     return(1e4*k*A*((1+z)**C)/(1+((1+z)/B)**D))
 
-def cc_snrates(z,type):
+def cc_snrates(z,vol_frac):
     #k = 0.0091*(.70)**2. ## for low-mass core-collapse supernovaae
     k = 0.007 ## for low-mass core-collapse supernovaae
     #return(1e4*k*vol_frac[type]*rz.sfr_2020(z))
-    return(1e4*k*rz.sfr_2020(z)) ## I'm removing volumetric fraction to use iip rates as a proxy
+    return(1e4*k*vol_frac*rz.sfr_2020(z)) 
 
 def snrates_Ia(z):
     ##data = loadtxt('SNRmodelTable.dat')
@@ -126,6 +128,90 @@ def get_unique_visits(survey):
 def fline(x,*p):
     m,b = p
     return m*x+b
+
+def det_eff(delta_mag,mc=30, T=1.0, S=0.3):
+    result=T/(1+exp((delta_mag-mc)/S))
+    return(result)
+
+def load_color_corrections(color_cor_file):
+    """
+    Reads per-subtype peak color corrections from a text file.
+
+    Parameters
+    ----------
+    color_cor_file : str
+        Path to the color corrections text file.
+
+    Returns
+    -------
+    color_corrections : dict
+        Nested dictionary mapping sntype -> central_wave_nm -> color_cor_mag.
+        e.g. color_corrections['iip'][619] = -0.31
+    """
+    color_corrections = {}
+    with open(color_cor_file, 'r') as f:
+        for line in f.readlines():
+            # skip comment and empty lines
+            if line.startswith('#') or line.strip() == '':
+                continue
+            parts = line.split()
+            if len(parts) != 3:
+                continue
+            sntype   = parts[0]
+            cen_wave = int(parts[1])
+            try:
+                color = float(parts[2])
+            except ValueError:
+                color = np.nan
+            if sntype not in color_corrections:
+                color_corrections[sntype] = {}
+            color_corrections[sntype][cen_wave] = color
+    return color_corrections
+
+def load_absmags(absmags_file):
+    """
+    Reads peak absolute magnitudes in SDSS g-band (AB) from a text file.
+
+    Parameters
+    ----------
+    absmags_file : str
+        Path to the absolute magnitudes text file.
+
+    Returns
+    -------
+    absmags : dict
+        Dictionary mapping sntype to [mean_mag, sigma, scatter].
+        e.g. absmags['iip'] = [-16.71, 0.97, 0.37]
+    """
+    absmags = {}
+    with open(absmags_file, 'r') as f:
+        for line in f.readlines():
+            if line.startswith('#') or line.strip() == '':
+                continue
+            parts = line.split()
+            if len(parts) != 4:
+                continue
+            sntype  = parts[0]
+            mean    = float(parts[1])
+            sigma   = float(parts[2])
+            scatter = float(parts[3])
+            absmags[sntype] = [mean, sigma, scatter]
+    return absmags
+
+def load_vol_frac(name=None, vol_frac_file=None):
+    with open(vol_frac_file) as f:
+        data = json.load(f)
+    if name is None:
+        name = data.get('_default', 'li_2011')
+    if name not in data or name.startswith('_'):
+        raise KeyError("Unknown vol_frac_set %r; options: %s"
+                       % (name, [k for k in data if not k.startswith('_')]))
+    vf = {k: v for k, v in data[name].items() if not k.startswith('_')}
+    cc_keys = [k for k in vf if k not in ('ia', 'slsn')]
+    cc_sum  = sum([vf[k] for k in cc_keys])
+    if cc_sum > 0:
+        vf = {k: (v/cc_sum if k in cc_keys else v) for k, v in vf.items()}
+    return vf
 
 def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, diag_dir):
     """
@@ -188,10 +274,10 @@ def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, diag_dir)
     savefig('%s/redshift_dist.png' % diag_dir)
     clf()
 
-def plot_tc_per_type(tc_per_type, z_low, z_high, method, diag_dir, mag=None):
-    """Per-z-bin diagnostic: stacked single bar showing each subtype's
-    contribution to tc_tot under the active subtype-combination method,
-    after weighing and summation. Total height = tc_tot for this bin."""
+def plot_tc_per_type(tc_per_type, z_low, z_high, diag_dir, mag=None):
+    """
+    Per-z-bin diagnostic: stacked single bar showing each subtype's control time
+    """
     if not tc_per_type:
         return
     types = list(tc_per_type.keys())
@@ -211,9 +297,9 @@ def plot_tc_per_type(tc_per_type, z_low, z_high, method, diag_dir, mag=None):
     ax.set_xticks([0])
     ax.set_xticklabels(['z=%.2f-%.2f' % (z_low, z_high)])
     ax.set_ylabel('Control time (rest-frame days)')
-    title = 'tc_tot = %.2f d  (%s)' % (total, method)
+    title = 'tc_tot = %.2f d' % total
     if mag is not None:
-        title += '  | maglim %.1f' % mag
+        title += '  | m50 %.1f' % mag
     ax.set_title(title)
     ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5),
               title='Subtype contribution', frameon=False)
@@ -229,11 +315,12 @@ def plot_tc_per_type(tc_per_type, z_low, z_high, method, diag_dir, mag=None):
 
 
 def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, sndata_root, model_path,
-        types,passband,maglim,survey,Nproc=1,extinction=True,obs_extin=True,
-        verbose=verbose, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
+        types,passband,survey,m50=30,T=1.0,S=0.30,Nproc=1,extinction=True,obs_extin=True,
+        verbose=True, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1, lc_smoothing_window=3,
-        biascor=None, subtype_combination='divide_average', vol_frac_set=None,
-        cosmology=None, review = False, ratefile=None, eventtable=None):
+        biascor=None, vol_frac=None,
+        cosmology=None, review = False, ratefile=None, eventtable=None, color_corrections=None,
+        absmags=None, kcor_ref=None):
 
     '''
     Computes the supernova rate and expected number of detections for a single
@@ -261,8 +348,10 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         List of SN types to compute rates for
     passband: str
         Path to the observed filter transmission file
-    maglim : float
-        Survey magnitude limit (sensitivity) in AB magnitudes.
+    m50 : float, optional
+        Magnitude at which your survey recovers 50% of sources. Default is 28.5
+    S: float, optional
+        Fitted parameter describing how rapidly your detection efficiency curve falls off. Default is 0.30
     survey: array
         Cadence array loaded from the cadence file. 
     Nproc: int, optional
@@ -295,9 +384,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Method for combining control times across subtypes. 'forward' sums
         fractionally weighted control times; 'divide_average' averages them.
         Default is 'divide_average'.
-    vol_frac_set: str, optional
-        The key in vol_fractions.json corresponding to the volumetric subtype fraction you 
-        want to use. Default is None.
+    vol_frac: dict, optional
+        The dictionary of volumetric fractions to use, keyed by SN subtype. Default is None.
     cosmology: list
         List containing cosmological parameters; should be [H0, Omega_m, Omega_Lambda]
         Default is None
@@ -320,11 +408,9 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Total weighted control time in rest-frame years, summed across all survey visits and SN subtypes.
     '''
     
-    rate=0.0
     N={}
-    denom={}
     redshift = (redshift2+redshift1)/2.
-    print('z=%2.2f rg=%2.2f no=%2.1f' %(redshift, rate_guess, number_guess))
+    print('z = %2.2f | Rate Guess = %2.2f | N_obs = %2.1f' %(redshift, rate_guess, number_guess))
     rate_guess = rate_guess*1.0e-4
 
     if len(shape(survey))==1:
@@ -336,51 +422,53 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         # gets used later in the loop.
         survey = get_unique_visits(survey)
     _cosmo = cosmocalc.resolve_cosmology(cosmology)
-    Dvol = volume.run(redshift2, **_cosmo)-volume.run(redshift1, **_cosmo)
+    Dvol = volume.run(redshift2, **_cosmo)-volume.run(redshift1, **_cosmo)    
 
     # Diagnostic: per-subtype contribution to tc_tot under the active method.
     tc_per_type = {t: 0.0 for t in types}
 
     tc_tot=0
-    inv_tc_tmp=0
-    tc_tmp=[]
     for i,item in enumerate(survey):
+        print("Computing SN Rates for Epoch %s" % i)
         baseline=item[0]
         area = item[1]
 
         # Convert the survey area from arcminutes to fraction of the total sky
         area_frac = area * (1./60.)**2*(pi/180)**2*(4.0*pi)**(-1)
 
-        sens = maglim
         prev = item[3]
         for type in types:
 
             if not box_tc:
-                tc = control_time.run(redshift, baseline, sens, Nproc=Nproc, parallel=parallel,
+                tc = control_time.run(redshift, baseline, m50=m50, T=T, S=S, Nproc=Nproc, parallel=parallel,
                                       extinction=extinction, obs_extin=obs_extin,
                                       type=[type], prev=prev, passband=passband,
                                       passwavemult=passwavemult, passskiprow=passskiprow,
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                      lc_smoothing_window=lc_smoothing_window,
-                                      biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
-                                      verbose=verbose, plot=True,
+                                      lc_smoothing_window=lc_smoothing_window, color_corrections=color_corrections,
+                                      biascor=biascor, cosmology=cosmology, review=review,
+                                      verbose=verbose, plot=True, absmags=absmags, kcor_ref=kcor_ref,
                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
             else:
-                tc1 = control_time.run(redshift1, baseline, sens, Nproc=Nproc, parallel=parallel,
+                print("Calculating Control Time 1 at z=%s for %s" % (redshift1, type))
+                print("-"*60)
+                tc1 = control_time.run(redshift1, baseline, m50=m50, T=T, S=S, Nproc=Nproc, parallel=parallel,
                                        extinction=extinction, obs_extin=obs_extin,
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
-                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
-                                       verbose=verbose,
+                                       dstep=dstep, dmstep=dmstep, dastep=dastep, kcor_ref=kcor_ref,
+                                       biascor=biascor, cosmology=cosmology, review=review,
+                                       verbose=verbose, color_corrections=color_corrections, absmags=absmags,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
-                tc2 = control_time.run(redshift2, baseline, sens, Nproc=Nproc, parallel=parallel,
+                print("")
+                print("Calculating Control Time 2 at z=%s for %s" % (redshift2, type))
+                tc2 = control_time.run(redshift2, baseline, m50=m50, T=T, S=S, Nproc=Nproc, parallel=parallel,
                                        extinction=extinction, obs_extin=obs_extin,
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
-                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
-                                       biascor=biascor, subtype_combination=subtype_combination, vol_frac_set=vol_frac_set, cosmology=cosmology, review=review,
-                                       verbose=verbose, plot=True,
+                                       dstep=dstep, dmstep=dmstep, dastep=dastep, kcor_ref=kcor_ref,
+                                       biascor=biascor, cosmology=cosmology, review=review,
+                                       verbose=verbose, plot=True, color_corrections=color_corrections, absmags=absmags,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
                 
                 xx =array([redshift1, redshift2])
@@ -391,10 +479,16 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                 tc = quad(fline,xx[0],xx[1],args=tuple(pout))[0]/diff(xx)
                 tc = tc[0]
             ## tc = tc/(1+redshift)*0.7**3 #### this line needs to be deleted!!
-            exp_num = rate_guess*(tc*Dvol*area_frac)
 
+            # FIGURE OUT HOW TO INVOLVE VOLUMETRIC FRACTION HERE
+            rel_num = 1.*(vol_frac[type])
+            exp_num = rate_guess*rel_num*(tc*Dvol*area_frac)
+            print("="*60)
             print("Mean Control Time of type %s = %4.2f rest frame days" %(type.upper(), tc*365.25))
             print("Volume probed = %.2f x10^4 Mpc^3 @ z= %.2f" %(area_frac*Dvol/1e4, redshift))
+            print("="*60)
+            print("")
+            print("")
 
             try:
                 multiplier = item[-1]
@@ -404,26 +498,27 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                 N[type]+=(exp_num*multiplier)
             except:
                 N[type]=exp_num*multiplier
-            if verbose: print('%d %s %2.1f' %(i,type, N[type]))
+            #if verbose: print('%d %s %2.1f' %(i,type, N[type]))
             tc_tot += tc*multiplier
-            tc_tmp.append(tc*multiplier)
             tc_per_type[type] += tc * multiplier
-        print("iteration %d %2.2f %s" %(i, sum(list(N.values())), ', '.join(list(map(str,item)))))
+        #print("Epoch %d %2.2f %s" %(i, sum(list(N.values())), ', '.join(list(map(str,item)))))
+        print("")
+        print("")
         print("\n")
 
     print('-------\n')
-    if subtype_combination == 'forward':
+    #if subtype_combination == 'forward':
         #  control_time returned f_X * T_raw_X per subtype;
         # sum across subtypes, no /N_types averaging
-        Nexp = sum(list(N.values()))
+    Nexp = sum(list(N.values()))
         # tc_tot already holds sum_X (f_X * T_raw_X) summed over survey rows
-    else:
+    #else:
         # 'divide_average' (original): control_time returned T_raw_X / f_X per subtype;
         # average across subtypes
-        Nexp = sum(list(N.values())) / len(types)
-        tc_tot = tc_tot / len(types)
-        for t in tc_per_type:
-            tc_per_type[t] /= len(types)
+    #    Nexp = sum(list(N.values())) #/ len(types)
+        #tc_tot = tc_tot #/ len(types)
+        #for t in tc_per_type:
+        #    tc_per_type[t] /= len(types)
 
     ## pdb.set_trace()
     
@@ -443,13 +538,30 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
     Nobs = number_guess
     Nobs_hi, Nobs_lo = poisson_error(Nobs)
 
-    Robs = Nobs/(tc_tot*Dvol*area_frac)*1e4
-    Rerr_hi = Nobs_hi/(tc_tot*Dvol*area_frac)*1e4-Robs
-    Rerr_lo = Robs-Nobs_lo/(tc_tot*Dvol*area_frac)*1e4
+    Robs, Rerr_hi, Rerr_lo = 0.0, 0.0, 0.0
+    for type in types:
+        # Get your relative subtype fraction
+        rel_num = 1.*(vol_frac[type])
+        # Get your subtype's control time (years)
+        tc_subtype = tc_per_type[type]
+
+        # compute per-subtype central rate and errors
+        denom = tc_subtype * Dvol * area_frac
+        R_central = (Nobs    * rel_num / denom) * 1e4
+        R_hi      = (Nobs_hi * rel_num / denom) * 1e4
+        R_lo      = (Nobs_lo * rel_num / denom) * 1e4
+
+        Robs     += R_central
+        Rerr_hi  += R_hi - R_central  # upper error on this subtype's contribution
+        Rerr_lo  += R_central - R_lo  # lower error on this subtype's contribution
+
+    #Robs = Nobs/(tc_tot*Dvol*area_frac)*1e4
+    #Rerr_hi = Nobs_hi/(tc_tot*Dvol*area_frac)*1e4-Robs
+    #Rerr_lo = Robs-Nobs_lo/(tc_tot*Dvol*area_frac)*1e4
 
     print('Total Control Time = %.2f days' %(tc_tot*365.25))
-    print('Rate from %2.1f expected events to %2.1f mag: R=%2.2f+%2.2f-%2.2f' %(number_guess, sens, Robs, Rerr_hi, Rerr_lo))
-    print('Number expected to %2.1f mag from expected rate of R=%2.2f: N=%2.1f+%2.1f-%2.1f' %(sens, rate_guess*1e4, Nexp, Nexp_hi-Nexp, Nexp-Nexp_lo))
+    print('Rate from %2.1f expected events to %2.1f mag: R=%2.2f+%2.2f-%2.2f' %(number_guess, m50, Robs, Rerr_hi, Rerr_lo))
+    print('Number expected to %2.1f mag from expected rate of R=%2.2f: N=%2.1f+%2.1f-%2.1f' %(m50, rate_guess*1e4, Nexp, Nexp_hi-Nexp, Nexp-Nexp_lo))
     print('-------\n')
     print('%.2f   %.2f   %.2f   %.2f   %.2f   %.2f   %.1f   %.1f   %.1f   %.1f'
           %(redshift, redshift1, redshift2, Robs, Rerr_hi, Rerr_lo, Nexp, Nexp_hi-Nexp, Nexp-Nexp_lo, number_guess))
@@ -463,8 +575,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
             )
     f,close()
     if review:
-        plot_tc_per_type(tc_per_type, redshift1, redshift2, subtype_combination,
-                         diag_dir, mag=sens)
+        plot_tc_per_type(tc_per_type, redshift1, redshift2, #subtype_combination,
+                         diag_dir, mag=m50)
     return([Nexp, Nexp_hi, Nexp_lo, tc_tot])
     
 
@@ -535,15 +647,47 @@ def main(configfile=None):
     except:
         obs_extin = config['obs_extin']
     biascor = config['biascor']
-    subtype_combination = config.get('subtype_combination', 'divide_average')
-    vol_frac_set = config.get('vol_frac_set', None)  # None -> use default in vol_fractions.json
+    #subtype_combination = config.get('subtype_combination', 'divide_average')
     cosmology = config.get('cosmology', None)        # None -> use default in cosmologies.json
+    kcor_ref = config['kcor_reference_system']
 
     cadence_file=config['cadence_file']
     itermag = json.loads(config['itermag'])
+    band = config['band']
     passband = config['passband']
     passskiprow = config['passskiprow']
     passwavemult = config['passwavemult']
+
+    # color_cor = M_X(AB) - M_g(AB)
+    # Applied as: apparent_mag = lc + kcor + mu + dm + AL + color_cor
+    # Positive = X fainter than g, Negative = X brighter than g
+    color_cor_file = config.get('color_correction_file', None)
+    if color_cor_file is None:
+        raise ValueError(
+            "No color_cor_file specified in config -- "
+            "a peak color correction file must be provided via 'color_correction_file'."
+        )
+    color_corrections = load_color_corrections(color_cor_file)
+
+
+    absmags_file = config.get('peak_absmags_file', None)
+    if absmags_file is None:
+        raise ValueError(
+            "No absmags_file specified in config -- "
+            "an absolute magnitudes file must be provided via 'absmags_file'."
+        )
+    absmags = load_absmags(absmags_file)
+
+    vol_frac_set = config.get('vol_frac_set', None)
+    if vol_frac_set is not None:
+        vol_frac_file = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'vol_fractions.json')
+        vol_frac = load_vol_frac(vol_frac_set, vol_frac_file)
+
+    else:
+        raise ValueError(
+            "No vol_frac_set specified in config -- "
+            "a volumetric fraction file must be provided via 'vol_frac_set'."
+        )
     
     #processing 
     #outfile = config['outfile_rates']
@@ -554,6 +698,9 @@ def main(configfile=None):
     #sample table
     eventtable = config['eventtable']
     determinate = json.loads(config['determinate'])
+
+    # detection efficiency table
+    det_eff_tab = config['det_eff_table']
 
     #fake binned SNe
     falseevents = json.loads(config['falseevents'])
@@ -755,7 +902,10 @@ def main(configfile=None):
 
             # Compute CCSN rate guess without evolving IMF
             if imf_evol is None:
-                rg = cc_snrates(array(med_z),sntypes[0]) # why is sn type required for this?
+                rg = zeros(len(med_z))
+                for sntype in sntypes:
+                    rg += cc_snrates(array(med_z), vol_frac[sntype])
+                #rg = cc_snrates(array(med_z),sntypes[0]) # why is sn type required for this?
 
             # Compute CCSN rate guess with Dave evolving IMF
             elif imf_evol=='dave':
@@ -820,6 +970,15 @@ def main(configfile=None):
         #numbers = []
         ctr = 0
 
+        # Use the input detection efficiency table to obtain best-fit parameters describing detection efficiency curve
+        detection_efficiency_tab = ascii.read(det_eff_tab)
+        band_mask = detection_efficiency_tab['band'] == band
+        inj_mags = np.array(detection_efficiency_tab[band_mask]['inj_mag'])
+        avg_recovery = np.array(detection_efficiency_tab[band_mask]['mean_det_eff'])
+        m50_guess = inj_mags[np.argmin(abs(avg_recovery - 0.5))]
+        popt, _ = curve_fit(det_eff, inj_mags, avg_recovery, p0=[m50_guess, max(avg_recovery), 0.3])
+        m50_fit, T_fit, S_fit = popt 
+
         #out_rate_file = outfile.replace('.pkl','.txt')
         #if os.path.isfile(out_rate_file): os.remove(out_rate_file)
         # Remove the output file if it already exists
@@ -835,7 +994,7 @@ def main(configfile=None):
                 print('\n\n Iteration %d of %d\n\n' %(ctr,len(mags)*(len(redshifts)-1)))
                 print('Rate guess = %2.2f' %rg[i-1])
                 num, nhi, nlo, tc = run(redshifts[i], redshifts[i-1], rg[i-1], ng[i-1],
-                                        types=sntypes, passband=passband, maglim=mag,
+                                        types=sntypes, passband=passband, m50=m50_fit, T=T_fit, S=S_fit,
                                         Nproc=Nproc,parallel=multiproc,
                                         verbose=verbose, extinction=extinction, obs_extin=obs_extin,
                                         survey = survey,
@@ -848,14 +1007,17 @@ def main(configfile=None):
                                         #ratefile=out_rate_file,
                                         ratefile=outfile_rates,
                                         biascor=biascor,
-                                        subtype_combination=subtype_combination,
-                                        vol_frac_set=vol_frac_set,
+                                        #subtype_combination=subtype_combination,
+                                        vol_frac=vol_frac,
+                                        color_corrections=color_corrections,
+                                        absmags=absmags,
                                         cosmology=cosmology,
                                         review = review,
                                         diag_dir = diag_dir,
                                         base_root = base_root,
                                         sndata_root = sndata_root,
-                                        model_path = model_path
+                                        model_path = model_path,
+                                        kcor_ref=kcor_ref
                                         )
                 #numbers.append([mag, num, nhi, nlo, (redshifts[i]+redshifts[i-1])/2., redshifts[i-1], redshifts[i]])
         #numbers=array(numbers)
