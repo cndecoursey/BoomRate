@@ -30,94 +30,12 @@ warnings.simplefilter("error",RuntimeWarning)
 rcParams['figure.figsize']=12,9
 rcParams['font.size']=16.0
 
-'''
-template_peak = { ##the assumed normalization for the SNANA templates
-    'iip': -16.05,
-    'iin': -17.05,
-    'iil': -16.33,
-    'ib' : -15.05,
-    'ic' : -15.05,
-    'ibc': -15.05,
-    'ia' : -19.46,
-    'slsn': -21.7,
-    }
-
-absmags_li_2011 = {
-    'iip': [-15.66, 1.23, 0.16],
-    'iin': [-16.86, 1.61, 0.59],
-    'iil': [-17.44, 0.64, 0.22],
-    'ib' : [-17.01, 0.41, 0.17],
-    'ic' : [-16.04, 1.28, 0.31],
-    'ibc': [-16.04, 1.28, 0.31],
-    }
-
-absmags_richardson_2014 = {
-    'iip': [-16.80, 0.97, 0.37],
-    'iib': [-17.03, 0.93, 0.45],
-    'iin': [-18.62, 1.48, 0.32],
-    'iil': [-17.98, 0.90, 0.34],
-    'ib' : [-17.54, 0.94, 0.33],
-    'ic' : [-17.67, 1.04, 0.40],
-    'ibc': [-16.67, 1.04, 0.40],
-    'ia' : [-19.26, 0.51, 0.20],
-    'slsn': [-21.7, 0.4,0.0], ## from Quimby+2013, by way of Gal-Yam 2018
-    ## 'slsn': [-30, 2.5,0.0], ## from Whalen et al. 2013
-    }
-absmags_dahlen_2012 = {
-    'iip': [-16.67, 1.12],
-    'iin': [-18.82, 0.92],
-    'iil': [-17.23, 0.38],
-    'ib' : [-19.38, 0.46],
-    'ic' : [-17.07, 0.49],
-    }
-
-# Converted from Bessell B (Vega; Richardson+2014) to SDSS g
-absmags_sdss_g_AB = {
-    'iip': [-16.77, 0.97, 0.37],
-    'iil': [-18.12, 0.86, 0.40],
-    'iin': [-18.57, 1.48, 0.16],
-    'ib': [-17.56, 1.12, 0.40],
-    'ic': [-17.82, 1.18, 0.40],
-}
-    
-
-absmags=absmags_sdss_g_AB
-
-
-#absmag_new = {}
-#for key in absmags.keys(): absmag_new[key]=[absmags[key][0]-absmags[key][2],absmags[key][1],absmags[key][2]]
-#absmags=absmag_new
-
-# For color_cor_Ia, the reference filter is 551 nm (Bessell V-band)
-color_cor_Ia={
-    360:1.8,
-    442:0.15,
-    551:0.0,
-    663:-0.61,
-    806:-0.56
-    }
-
-# For color_cor_gen (CCSNe), the reference filter is unclear?
-color_cor_gen={
-    356:2.7,
-    472:0.15,
-    619:-0.3,
-    750:-0.61,
-    896:0.8
-    }
-
-color_cor_slsn={
-    356: 2.0,
-    472: 0.15,
-    }
-'''
-
 def run(redshift, baseline, base_root, sndata_root, model_path, diag_dir,
         type, m50=30, T=1.0, S=0.3, dstep=3, dmstep=0.5, dastep=0.5, lc_smoothing_window=3,
         parallel=False, extinction=True, obs_extin=True, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
         plot=False, verbose=False, review=False, biascor='flat',
-        cosmology=None,color_corrections=None, absmags=None, kcor_ref=None):
+        cosmology=None,color_corrections=None, absmags=None):
 
     print('--- absmags diagnostic ---')
     print('type: %s' % type[0])
@@ -335,7 +253,7 @@ def run(redshift, baseline, base_root, sndata_root, model_path, diag_dir,
     if parallel:
         #if verbose: print('... running parallel kcor by model SN age on %d processors' %Nproc)
         run_kcor_x= partial(kcor, f1=f1, f2=f2, models_used_dict=models_used_dict, redshift=redshift, 
-                            vega_spec=vega_spec, kcor_ref=kcor_ref)
+                            vega_spec=vega_spec, AB=True)
         pool = multiprocessing.Pool(processes=Nproc)
         result_list = pool.map(run_kcor_x, rest_age)
         # Convert result_list into a 2D numpy array of shape (N_ages, 2) 
@@ -347,7 +265,7 @@ def run(redshift, baseline, base_root, sndata_root, model_path, diag_dir,
         obs_kcor=[]
         #if verbose: print('... running serial kcor iterating over model SN age')
         for age in rest_age:
-            mkcor,skcor=kcor(age, f1,f2,models_used_dict,redshift,vega_spec, kcor_ref=kcor_ref)
+            mkcor,skcor=kcor(age, f1,f2,models_used_dict,redshift,vega_spec, AB=True)
             if verbose > 1: print(age,mkcor)
             obs_kcor.append([mkcor,skcor])
         obs_kcor=array(obs_kcor)
@@ -1367,7 +1285,7 @@ def slsn_lc(xt, tm=29.94, b14=3.82, pms=1.0):
   
     
 
-def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, kcor_ref=None):
+def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, AB=True):
     """
     Computes the K-correction at a single rest-frame age by integrating
     SN SED templates through the observed and rest-frame filters. The
@@ -1426,11 +1344,6 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
         at this age, e.g. if no templates have spectra near best_age
         or if all flux integrals are zero or negative.
     """
-
-    # Require kcor ref to be set
-    if kcor_ref is None:
-        raise ValueError("kcor reference system must be set to either Vega or AB")
-
 
     import warnings#,exceptions
     
@@ -1544,15 +1457,13 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             # yy[idx2] — rest-frame SN SED flux F_SN(lambda)
             # my_nanmean(diff(xx[idx2])) — mean wavelength step dlambda
             # This represents the flux you would observe from this SN through your JWST filter.
-            if kcor_ref == 'AB':
+            if AB:
                 # MAY NEED TO CHANGE BACK LATER
                 synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2])) # original
                 #synth_obs = sum(array(restf1)/xx[idx2]*yy[idx2])*my_nanmean(diff(xx[idx2])) # same as synth_AB
                 #synth_obs = sum(array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
-            elif kcor_ref == 'Vega':
-                synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
             else:
-                raise ValueError("kcor reference system must be set to either Vega or AB")
+                synth_obs = sum(xx[idx2]*array(restf1)*yy[idx2])*my_nanmean(diff(xx[idx2]))
 
             # Find the indices of the extended SED that fall within the wavelength range 
             # of the rest-frame filter f2 (this time without any blueshifting, since f2 
@@ -1565,12 +1476,12 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             # This is what you would observe if you could observe the SN directly through 
             # the rest-frame filter without any redshift — essentially the "idealized" flux that 
             # the templates were calibrated in
-            if kcor_ref == 'AB':
+            if AB:
                 # MAY NEED TO CHANGE THIS BACK LATER
                 nearest_obs = sum(xx[idx3]*array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3])) #original
                 #nearest_obs = sum(array(restf2)/xx[idx3]*yy[idx3])*my_nanmean(diff(xx[idx3])) # same as nearest_AB
                 #nearest_obs = sum(array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3]))
-            elif kcor_ref == 'Vega':
+            else:
                 nearest_obs = sum(xx[idx3]*array(restf2)*yy[idx3])*my_nanmean(diff(xx[idx3]))
 
         else:
@@ -1578,18 +1489,16 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             ## this would work fine, except at redshifts where the observed filter does not overlap the template spectra
             idx2 = where((spec[idx][:,1]>=min(f1[:,0]/(1+redshift)))&(spec[idx][:,1]<=max(f1[:,0]/(1+redshift))))
             (junk,restf1) = u.recast(spec[idx][idx2][:,1],0.,f1[:,0]/(1+redshift),f1[:,1])
-            if kcor_ref == 'AB':
-                synth_obs = sum(spec[idx][idx2][:,1]*array(restf1)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
-            elif kcor_ref == 'Vega':
+            if AB:
                 synth_obs = sum(spec[idx][idx2][:,1]*array(restf1)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
             else:
-                raise ValueError("kcor reference system must be set to either Vega or AB")
+                synth_obs = sum(spec[idx][idx2][:,1]*array(restf1)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
         
             idx2 = where((spec[idx][:,1]>=min(f2[:,0]))&(spec[idx][:,1]<=max(f2[:,0])))
             (junk,restf2) = u.recast(spec[idx][idx2][:,1],0.,f2[:,0],f2[:,1])
-            if kcor_ref == 'AB':
+            if AB:
                 nearest_obs = sum(spec[idx][idx2][:,1]*array(restf2)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
-            elif kcor_ref == 'Vega':
+            else:
                 nearest_obs = sum(spec[idx][idx2][:,1]*array(restf2)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
 
             ## synth_obs = sum(spec[idx][idx2][:,1]*array(restf1)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
@@ -1597,7 +1506,7 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             ## (junk,restf2) = u.recast(spec[idx][idx2][:,1],0.,f2[:,0],f2[:,1])
             ## nearest_obs = sum(spec[idx][idx2][:,1]*array(restf2)*spec[idx][idx2][:,2])*my_nanmean(diff(spec[idx][idx2][:,1]))
 
-        if kcor_ref == 'AB':
+        if AB:
             try:
                 #kc = -1*(-2.5*log10(1.+redshift)+2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_AB/nearest_AB)) # has sign error
                 #kc = -1*(2.5*log10(1.+redshift)+2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_AB/nearest_AB)) # same as below but written differently
@@ -1605,7 +1514,7 @@ def kcor(best_age,f1,f2,models_used_dict,redshift,vega_spec, extrapolated=True, 
             except:
                 # float('Nan')
                 kc = float('Nan')
-        elif kcor_ref == 'Vega':
+        else:
             try:
                 kc = -1*(2.5*log10(synth_obs/nearest_obs)-2.5*log10(synth_vega/nearest_vega))
             except:

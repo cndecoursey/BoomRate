@@ -47,8 +47,8 @@ absmags_richardson_2014_B_Vega = {
     'ia':  [-19.26, 0.51, 0.20],
 }
 
-# Vega-to-AB offset for Bessell B-band (Fukugita et al. 1995)
-B_vega_to_AB = 0.09
+# Vega-to-AB offset for Bessell B-band (Blanton & Roweis 2007)
+B_vega_to_AB = -0.09
 
 # SN type to pkl file mapping
 pkl_files = {

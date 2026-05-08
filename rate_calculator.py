@@ -320,7 +320,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         dstep=0.5, dmstep=0.1, dastep=0.1, lc_smoothing_window=3,
         biascor=None, vol_frac=None,
         cosmology=None, review = False, ratefile=None, eventtable=None, color_corrections=None,
-        absmags=None, kcor_ref=None):
+        absmags=None):
 
     '''
     Computes the supernova rate and expected number of detections for a single
@@ -447,7 +447,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
                                       lc_smoothing_window=lc_smoothing_window, color_corrections=color_corrections,
                                       biascor=biascor, cosmology=cosmology, review=review,
-                                      verbose=verbose, plot=True, absmags=absmags, kcor_ref=kcor_ref,
+                                      verbose=verbose, plot=True, absmags=absmags,
                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
             else:
                 print("Calculating Control Time 1 at z=%s for %s" % (redshift1, type))
@@ -456,7 +456,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                        extinction=extinction, obs_extin=obs_extin,
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
-                                       dstep=dstep, dmstep=dmstep, dastep=dastep, kcor_ref=kcor_ref,
+                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, cosmology=cosmology, review=review,
                                        verbose=verbose, color_corrections=color_corrections, absmags=absmags,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
@@ -466,7 +466,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                        extinction=extinction, obs_extin=obs_extin,
                                        type=[type], prev=prev,passband=passband,
                                        passwavemult=passwavemult, passskiprow=passskiprow,
-                                       dstep=dstep, dmstep=dmstep, dastep=dastep, kcor_ref=kcor_ref,
+                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, cosmology=cosmology, review=review,
                                        verbose=verbose, plot=True, color_corrections=color_corrections, absmags=absmags,
                                        base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
@@ -649,7 +649,6 @@ def main(configfile=None):
     biascor = config['biascor']
     #subtype_combination = config.get('subtype_combination', 'divide_average')
     cosmology = config.get('cosmology', None)        # None -> use default in cosmologies.json
-    kcor_ref = config['kcor_reference_system']
 
     cadence_file=config['cadence_file']
     itermag = json.loads(config['itermag'])
@@ -1016,8 +1015,7 @@ def main(configfile=None):
                                         diag_dir = diag_dir,
                                         base_root = base_root,
                                         sndata_root = sndata_root,
-                                        model_path = model_path,
-                                        kcor_ref=kcor_ref
+                                        model_path = model_path
                                         )
                 #numbers.append([mag, num, nhi, nlo, (redshifts[i]+redshifts[i-1])/2., redshifts[i-1], redshifts[i]])
         #numbers=array(numbers)
