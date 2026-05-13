@@ -14,7 +14,7 @@ def get_central_wavelength(filter_file, skip=0, wavemult=1.):
 
 if __name__=='__main__':
     
-    passband_files = glob.glob('F???W.txt')
+    passband_files = glob.glob('JWST_filters/F???W.txt')
 
     ax1 = subplot(211)
     ax2 = subplot(212)
@@ -24,13 +24,13 @@ if __name__=='__main__':
         dfs = abs(data[:,0]*1000-elam)
         idx = where(dfs == dfs.min())
         if (ii%2==0):
-            ax1.plot(data[:,0]*1000., data[:,1], color=u.my_color(ii), label='%s'%(file.split('.')[0]))
+            ax1.plot(data[:,0]*1000., data[:,1], color=u.my_colors(ii), label='%s'%(file.split('.')[0]))
             ax1.annotate('%3d'%int(elam),xy=(data[idx][0][0]*1000,data[idx][0][1]), xycoords='data',
-                         rotation=45, color=u.my_color(ii))
+                         rotation=45, color=u.my_colors(ii))
         else:
-            ax2.plot(data[:,0]*1000., data[:,1], color=u.my_color(ii), label='%s'%(file.split('.')[0]))
+            ax2.plot(data[:,0]*1000., data[:,1], color=u.my_colors(ii), label='%s'%(file.split('.')[0]))
             ax2.annotate('%3d'%int(elam),xy=(data[idx][0][0]*1000,data[idx][0][1]), xycoords='data',
-                         rotation=45, color=u.my_color(ii))
+                         rotation=45, color=u.my_colors(ii))
 
     ax2.set_xlabel('Wavelength (nm)')
     ax2.set_ylabel('Throughput')
@@ -38,8 +38,5 @@ if __name__=='__main__':
     ax1.legend(loc=1,frameon=False)
     ax2.legend(loc=1,frameon=False)
 
-
-
-
-    savefig('figure_jwst_filers.png')
+    savefig('JWST_filters/figure_jwst_filers.png')
     
