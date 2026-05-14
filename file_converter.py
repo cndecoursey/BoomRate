@@ -36,7 +36,7 @@ from scipy.interpolate import interp1d
 # -----------------------------------------------------------------------
 sndata_root    = '/Users/christadecoursey/Documents/SNANA/SNANA_2025'
 boomrate_root  = '/Users/christadecoursey/Documents/JADES/SN_Classification_and_Rates_Paper/classification/BoomRate'
-sed_dir        = boomrate_root + '/templates/non1a'   # directory with .SED files (update later to SNANA directory)
+sed_dir        = sndata_root + '/models/NON1ASED/NON1ASED.J17_CC'   # directory with .SED files 
 dat_output_dir = boomrate_root + '/broadband_lightcurves'  # where to write .DAT files
 # -----------------------------------------------------------------------
 
@@ -175,7 +175,7 @@ def read_sed_file(sed_path):
     return sntype, np.array(sed_data)
 
 
-def write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters, sndata_root):
+def write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters):
     """
     Writes a .DAT format light curve file compatible with read_lc_model().
 
@@ -192,8 +192,6 @@ def write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters, sndata_ro
         Shape: (N_epochs, N_filters).
     sdss_filters : list of tuples
         List of (label, name, path) for each SDSS filter.
-    sndata_root : str
-        SNANA root path used in the FILTER lines.
     """
     with open(dat_path, 'w') as f:
         f.write('NEPOCH: %d \n' % len(phases))
@@ -303,7 +301,7 @@ for sed_path in sed_files:
           '  '.join(['%.2f' % m for m in peak_mags])))
 
     # write the .DAT file
-    write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters, sndata_root)
+    write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters)
     print('  Written to %s' % dat_path)
     n_success += 1
 

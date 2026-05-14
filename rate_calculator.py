@@ -314,8 +314,8 @@ def plot_tc_per_type(tc_per_type, z_low, z_high, diag_dir, mag=None):
     close('all')
 
 
-def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, sndata_root, model_path,
-        types,passband,survey,m50=30,T=1.0,S=0.30,Nproc=1,extinction=True,obs_extin=True,
+def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, sndata_root, lightcurve_path,sed_path,
+        types,passband,survey,m50=30,T=1.0,S=0.30,Nproc=1,extinction=True,obs_extin='nominal',
         verbose=True, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1, lc_smoothing_window=3,
         biascor=None, vol_frac=None,
@@ -342,8 +342,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Absolute path to your BoomRate directory
     sndata_root: str
         Absolute path to your SNANA directory
-    model_path: str
-        Absolute path to your model directory
+    lightcurve_path: str
+        Absolute path to your lightcurve files
     types: list
         List of SN types to compute rates for
     passband: str
@@ -358,8 +358,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Number of parallel processors used to run the calculation. Default is 1
     extinction: bool, optional
         Whether to include host galaxy extinction in the control time calculation. Default is True
-    obs_extinc: bool, optional
-        Observational extinction treatment. Default is True
+    obs_extinc: str,optional
+        Observational extinction treatment. Default is 'nominal'
     verbose: bool, optional
         Whether to print progress updates during the calculation.
     parallel: bool, optional
@@ -448,7 +448,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                       lc_smoothing_window=lc_smoothing_window, color_corrections=color_corrections,
                                       biascor=biascor, cosmology=cosmology, review=review,
                                       verbose=verbose, plot=True, absmags=absmags,
-                                      base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
+                                      base_root=base_root, sndata_root=sndata_root, lightcurve_path=lightcurve_path, 
+                                      sed_path=sed_path,diag_dir=diag_dir)
             else:
                 print("Calculating Control Time 1 at z=%s for %s" % (redshift1, type))
                 print("-"*60)
@@ -459,7 +460,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, cosmology=cosmology, review=review,
                                        verbose=verbose, color_corrections=color_corrections, absmags=absmags,
-                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
+                                       base_root=base_root, sndata_root=sndata_root, lightcurve_path=lightcurve_path, 
+                                       sed_path=sed_path,diag_dir=diag_dir)
                 print("")
                 print("Calculating Control Time 2 at z=%s for %s" % (redshift2, type))
                 tc2 = control_time.run(redshift2, baseline, m50=m50, T=T, S=S, Nproc=Nproc, parallel=parallel,
@@ -469,7 +471,8 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, cosmology=cosmology, review=review,
                                        verbose=verbose, plot=True, color_corrections=color_corrections, absmags=absmags,
-                                       base_root=base_root, sndata_root=sndata_root, model_path=model_path, diag_dir=diag_dir)
+                                       base_root=base_root, sndata_root=sndata_root, lightcurve_path=lightcurve_path, 
+                                       sed_path=sed_path,diag_dir=diag_dir)
                 
                 xx =array([redshift1, redshift2])
                 yy = array([tc1,tc2])
@@ -629,7 +632,9 @@ def main(configfile=None):
     run_name = config['run_name']
     base_root = config['base_root']
     sndata_root = config['sndata_root']
-    model_path = config['model_path']
+    lightcurve_path = config['lightcurve_path']
+    spectral_template_ref = config['spectral_template_ref']
+    sed_path = sndata_root + '/models/NON1ASED/%s' % spectral_template_ref
 
     clobber = json.loads(config['clobber'])
     verbose = json.loads(config['verbose'])
@@ -641,13 +646,8 @@ def main(configfile=None):
     sntypes = config['sntypes']
     imf_evol = config['imf_evol']
     extinction = json.loads(config['extinction'])
-    try:
-        obs_extin = json.loads(config['obs_extin'])
-        if obs_extin==True: obs_extin='nominal' ## for backward compatabilty
-    except:
-        obs_extin = config['obs_extin']
+    obs_extin = config['obs_extin']
     biascor = config['biascor']
-    #subtype_combination = config.get('subtype_combination', 'divide_average')
     cosmology = config.get('cosmology', None)        # None -> use default in cosmologies.json
 
     cadence_file=config['cadence_file']
@@ -1015,7 +1015,8 @@ def main(configfile=None):
                                         diag_dir = diag_dir,
                                         base_root = base_root,
                                         sndata_root = sndata_root,
-                                        model_path = model_path
+                                        lightcurve_path = lightcurve_path,
+                                        sed_path=sed_path
                                         )
                 #numbers.append([mag, num, nhi, nlo, (redshifts[i]+redshifts[i-1])/2., redshifts[i-1], redshifts[i]])
         #numbers=array(numbers)
