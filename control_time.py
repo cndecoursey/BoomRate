@@ -7,10 +7,7 @@ from pylab import *
 from scipy import stats
 from scipy.optimize import curve_fit
 from scipy.integrate import quad
-from matplotlib.font_manager import fontManager, FontProperties
-from matplotlib.ticker import MultipleLocator, FormatStrFormatter
 import datetime, time
-from matplotlib import dates as mdates
 import util as u
 import diagnostic_plot_util as plot_util
 import cosmocalc
@@ -34,7 +31,7 @@ def run(redshift, baseline, base_root, sndata_root, lightcurve_path, sed_path, d
         type, m50=30, T=1.0, S=0.3, dstep=3, dmstep=0.5, dastep=0.5, lc_smoothing_window=3,
         parallel=False, extinction=True, obs_extin='nominal', Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
-        plot=False, verbose=False, review=False, biascor='flat',
+        verbose=False, review=False, biascor='flat',
         cosmology=None,color_corrections=None, absmags=None):
 
     print('--- absmags diagnostic ---')
@@ -349,12 +346,12 @@ def run(redshift, baseline, base_root, sndata_root, lightcurve_path, sed_path, d
         lum_normalization=0.0
         for dm in dmrange:
 
-            if review and da==1.0 and abs(dm) < dmstep/2.:
+            if review and da==0.2 and abs(dm) < dmstep/2.:
                 plot_util.plot_lightcurve_stages(rest_age=rest_age, observed_frame_lightcurve=observed_frame_lightcurve,
                                                  Mg_to_Mx_color=Mg_to_Mx_color, Mx_to_MQ_color=Mx_to_MQ_color,
                                                  mu=mu, da=da, dm=dm, sens=m50, type=type[0], redshift=redshift,
                                                  best_rest_filter=best_rest_filter, observed_filter=observed_filter, 
-                                                 diag_dir=diag_dir)
+                                                 ofilter_cen=ofilter_cen,diag_dir=diag_dir)
 
             # Go from nearest SDSS restframe lightcurve anchored by g-band peak to nearest SDSS restframe
             # light curve ("X"-band) anchored by "X"-band peak (applied with Mg_to_Mx color (x-g))
@@ -906,9 +903,12 @@ def prob_Av(Av, obs_extin='nominal'):
 # -----------------------------------------------------------------------------------------------------
 
 def calzetti(x,Rv=4.05): # in microns
+    # Calzetti+2000 eq 4 for 0.12<lambda_micron<0.63
     y=2.659*(-2.156 + 1.509*(x)**(-1.)-0.198*(x)**(-2.)+0.011*(x)**(-3))+Rv
+    # Calzetti+2000 eq 3 for 0.63<lambda_micron<2.20
     ii = where (x>0.63)
     y[ii]=2.659*(-1.857 + 1.040*(x[ii])**(-1.))+Rv
+    # Clip any negative values to a small positive number.
     y[where(y < 0)]=1e-4 ## arbitrary, non-negative
     return(y)
 

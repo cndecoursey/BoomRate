@@ -32,12 +32,13 @@ import numpy as np
 from scipy.interpolate import interp1d
 
 # -----------------------------------------------------------------------
-# CONFIGURATION -- update these paths for your machine
+# CONFIGURATION
 # -----------------------------------------------------------------------
 sndata_root    = '/Users/christadecoursey/Documents/SNANA/SNANA_2025'
 boomrate_root  = '/Users/christadecoursey/Documents/JADES/SN_Classification_and_Rates_Paper/classification/BoomRate'
-sed_dir        = sndata_root + '/models/NON1ASED/NON1ASED.J17_CC'   # directory with .SED files 
-dat_output_dir = boomrate_root + '/broadband_lightcurves'  # where to write .DAT files
+spec_temp_ref  = 'NON1ASED.J17_CC'
+sed_dir        = sndata_root + '/models/NON1ASED/' + spec_temp_ref  # directory with .SED files 
+dat_output_dir = boomrate_root + '/broadband_lightcurves/' + spec_temp_ref  # where to write .DAT files
 # -----------------------------------------------------------------------
 
 # SDSS filter labels and paths as they appear in .DAT files

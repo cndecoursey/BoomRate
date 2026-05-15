@@ -10,10 +10,8 @@ import os,sys,pdb,scipy,glob, time, pickle
 from pylab import *
 from scipy.optimize import curve_fit
 from scipy.integrate import quad
-#from strolger_util import util as u
-#from strolger_util import rates_z as rz
-#from strolger_util import imf
 import util as u
+import diagnostic_plot_util as plot_util
 import rates_z_new as rz
 import imf
 import volume, control_time, cosmocalc
@@ -26,52 +24,6 @@ import pandas as pd
 from scipy import stats
 from astropy.convolution import convolve, Gaussian1DKernel
 import astropy.io.ascii as ascii
-
-
-
-
-# Volumetric subtype fractions are loaded by control_time from vol_fractions.json
-# (see 'vol_frac_set' in the config).
-'''
-absmags_li_2011 = {
-    'iip': [-15.66, 1.23, 0.16],
-    'iin': [-16.86, 1.61, 0.59],
-    'iil': [-17.44, 0.64, 0.22],
-    'ib' : [-17.01, 0.41, 0.17],
-    'ic' : [-16.04, 1.28, 0.31],
-    'ibc': [-16.04, 1.28, 0.31],
-    }
-
-absmags_richardson_2014 = {
-    'iip': [-16.80, 0.97, 0.37],
-    'iin': [-18.62, 1.48, 0.32],
-    'iil': [-17.98, 0.90, 0.34],
-    'ib' : [-17.54, 0.94, 0.33],
-    'ic' : [-16.67, 1.04, 0.40],
-    'ibc': [-16.67, 1.04, 0.40],
-    'ia' : [-19.26, 0.51, 0.20],
-    #'fast' : [-17.5, 1.0, 0.1], ## not sure where this is from
-    'slsn': [-21.7, 0.4,0.0], ## from Quimby+2013, by way of Gal-Yam 2018   
-    ## 'slsn': [-30, 2.5,0.0], ## from Whalen et al. 2013
-    }
-#
-
-absmags_dahlen_2012 = {
-    'iip': [-16.67, 1.12],
-    'iin': [-18.82, 0.92],
-    'iil': [-17.23, 0.38],
-    'ib' : [-19.38, 0.46],
-    'ic' : [-17.07, 0.49],
-    }
-    
-
-absmags=absmags_richardson_2014
-verbose = True
-'''
-
-#absmag_new = {}
-#for key in absmags.keys(): absmag_new[key]=[absmags[key][0]-absmags[key][2],absmags[key][1],absmags[key][2]]
-#absmags=absmag_new
 
 
 def snrates(z,*p):
@@ -213,108 +165,8 @@ def load_vol_frac(name=None, vol_frac_file=None):
         vf = {k: (v/cc_sum if k in cc_keys else v) for k, v in vf.items()}
     return vf
 
-def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, diag_dir):
-    """
-    Plots the smoothed redshift probability distribution and cumulative distribution
-    with redshift bin boundaries and observed SN counts per bin.
-    
-    Parameters
-    ----------
-    redshift_tmp: array 
-        Redshift grid from 0 to 10 in steps of dzza
-    rv: array
-        Summed redshift probability distribution across all SNe
-    dzza: float
-        Redshift grid step size
-    redshifts: array
-        Bin edges
-    ng: array
-        Observed number of SNe in each bin
-    sntypes: list
-        List of SN types being considered
-    run_name: str
-        Name of the current run, used for the output filename
-    """
 
-    smooth_rv = convolve(rv*dzza, Gaussian1DKernel(10), boundary='extend')
-
-    fig, (ax1, ax2) = subplots(1, 2, figsize=(14, 5))
-
-    # Left panel: redshift distribution 
-    ax1.plot(redshift_tmp, smooth_rv, 'k-')
-    ax1.set_xlabel('Redshift')
-    ax1.set_xlim(0, 6)
-    if 'ia' in sntypes:
-        ax1.set_ylabel('Number of SNeIa')
-    else:
-        ax1.set_ylabel('Number of CCSNe')
-
-    # Shade each redshift bin and label with observed counts
-    colors = ['#d0e8f0', '#f0d8c0', '#d0f0d0', '#f0d0e8', '#e8f0d0']
-    for i in range(len(redshifts)-1):
-        ax1.axvspan(redshifts[i], redshifts[i+1], alpha=0.3, color=colors[i % len(colors)],
-                    label='z=%.2f-%.2f, N=%.1f' %(redshifts[i], redshifts[i+1], ng[i]))
-    ax1.legend(loc=1, fontsize=9, title='Total N=%.1f' %sum(ng), title_fontsize=10)
-
-    # Right panel: cumulative distribution 
-    ax2.plot(redshift_tmp, cumsum(rv)*dzza, 'k-', label='%.1f Total' %(cumsum(rv)[-1]*dzza))
-    ax2.set_xlabel('Redshift')
-    ax2.set_xlim(0, 6)
-    if 'ia' in sntypes:
-        ax2.set_ylabel('Cumulative number of SNeIa')
-    else:
-        ax2.set_ylabel('Cumulative number of CCSNe')
-
-    # Show bin boundaries as vertical lines
-    for z in redshifts:
-        ax2.axvline(z, color='gray', ls='--', lw=1)
-    ax2.legend(loc=2, fontsize=9)
-
-    tight_layout()
-    savefig('%s/redshift_dist.png' % diag_dir)
-    clf()
-
-def plot_tc_per_type(tc_per_type, z_low, z_high, diag_dir, mag=None):
-    """
-    Per-z-bin diagnostic: stacked single bar showing each subtype's control time
-    """
-    if not tc_per_type:
-        return
-    types = list(tc_per_type.keys())
-    contributions = array([tc_per_type[t] for t in types]) * 365.25  # rest-frame days
-    total = contributions.sum()
-    palette = cm.tab10(linspace(0, 1, max(len(types), 3)))
-
-    fig, ax = subplots(figsize=(5, 6))
-    bottom = 0.0
-    for t_idx, t in enumerate(types):
-        h = contributions[t_idx]
-        ax.bar(0, h, 0.6, bottom=bottom,
-               color=palette[t_idx % len(palette)], edgecolor='white', linewidth=0.5,
-               label='%s  %.2f d' % (t.upper(), h))
-        bottom += h
-
-    ax.set_xticks([0])
-    ax.set_xticklabels(['z=%.2f-%.2f' % (z_low, z_high)])
-    ax.set_ylabel('Control time (rest-frame days)')
-    title = 'tc_tot = %.2f d' % total
-    if mag is not None:
-        title += '  | m50 %.1f' % mag
-    ax.set_title(title)
-    ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5),
-              title='Subtype contribution', frameon=False)
-    ax.margins(x=0.4)
-    tight_layout()
-
-    if not os.path.isdir('diagnostic_plots'):
-        os.makedirs('diagnostic_plots')
-    savefig('%s/tc_per_type_z%.2f-%.2f.png' % (diag_dir, z_low, z_high),
-            bbox_inches='tight')
-    clf()
-    close('all')
-
-
-def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, sndata_root, lightcurve_path,sed_path,
+def run(redshift2, redshift1, rate_guess, Nobs, diag_dir, base_root, sndata_root, lightcurve_path,sed_path,
         types,passband,survey,m50=30,T=1.0,S=0.30,Nproc=1,extinction=True,obs_extin='nominal',
         verbose=True, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1, lc_smoothing_window=3,
@@ -334,7 +186,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Lower redshift bin edge
     rate_guess: float
         Initial rate guess for input redshift bin, based on cosmic SFRD; used to compute N_exp
-    number_guess: float
+    Nobs: float
         Observed number of SNe in your redshift bin from your survey
     diag_dir: str
         Name attached to your output diagnostic plots directory (e.g., 'diagnostic_plots/<run_name>/')
@@ -408,9 +260,9 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Total weighted control time in rest-frame years, summed across all survey visits and SN subtypes.
     '''
     
-    N={}
+    Nexp_subtype={}
     redshift = (redshift2+redshift1)/2.
-    print('z = %2.2f | Rate Guess = %2.2f | N_obs = %2.1f' %(redshift, rate_guess, number_guess))
+    print('z = %2.2f | Rate Guess = %2.2f | N_obs = %2.1f' %(redshift, rate_guess, Nobs))
     rate_guess = rate_guess*1.0e-4
 
     if len(shape(survey))==1:
@@ -447,7 +299,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                       dstep=dstep, dmstep=dmstep, dastep=dastep,
                                       lc_smoothing_window=lc_smoothing_window, color_corrections=color_corrections,
                                       biascor=biascor, cosmology=cosmology, review=review,
-                                      verbose=verbose, plot=True, absmags=absmags,
+                                      verbose=verbose, absmags=absmags,
                                       base_root=base_root, sndata_root=sndata_root, lightcurve_path=lightcurve_path, 
                                       sed_path=sed_path,diag_dir=diag_dir)
             else:
@@ -470,7 +322,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                                        passwavemult=passwavemult, passskiprow=passskiprow,
                                        dstep=dstep, dmstep=dmstep, dastep=dastep,
                                        biascor=biascor, cosmology=cosmology, review=review,
-                                       verbose=verbose, plot=True, color_corrections=color_corrections, absmags=absmags,
+                                       verbose=verbose, color_corrections=color_corrections, absmags=absmags,
                                        base_root=base_root, sndata_root=sndata_root, lightcurve_path=lightcurve_path, 
                                        sed_path=sed_path,diag_dir=diag_dir)
                 
@@ -481,9 +333,7 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
                 pout = curve_fit(fline,xx,yy,p0=p0)[0]
                 tc = quad(fline,xx[0],xx[1],args=tuple(pout))[0]/diff(xx)
                 tc = tc[0]
-            ## tc = tc/(1+redshift)*0.7**3 #### this line needs to be deleted!!
 
-            # FIGURE OUT HOW TO INVOLVE VOLUMETRIC FRACTION HERE
             rel_num = 1.*(vol_frac[type])
             exp_num = rate_guess*rel_num*(tc*Dvol*area_frac)
             print("="*60)
@@ -498,33 +348,20 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
             except:
                 multiplier = 1.0
             try:
-                N[type]+=(exp_num*multiplier)
+                Nexp_subtype[type]+=(exp_num*multiplier)
             except:
-                N[type]=exp_num*multiplier
-            #if verbose: print('%d %s %2.1f' %(i,type, N[type]))
+                Nexp_subtype[type]=exp_num*multiplier
             tc_tot += tc*multiplier
             tc_per_type[type] += tc * multiplier
-        #print("Epoch %d %2.2f %s" %(i, sum(list(N.values())), ', '.join(list(map(str,item)))))
         print("")
         print("")
         print("\n")
 
     print('-------\n')
-    #if subtype_combination == 'forward':
-        #  control_time returned f_X * T_raw_X per subtype;
-        # sum across subtypes, no /N_types averaging
-    Nexp = sum(list(N.values()))
-        # tc_tot already holds sum_X (f_X * T_raw_X) summed over survey rows
-    #else:
-        # 'divide_average' (original): control_time returned T_raw_X / f_X per subtype;
-        # average across subtypes
-    #    Nexp = sum(list(N.values())) #/ len(types)
-        #tc_tot = tc_tot #/ len(types)
-        #for t in tc_per_type:
-        #    tc_per_type[t] /= len(types)
 
-    ## pdb.set_trace()
-    
+    # Get the expected number of events by summing the expected number of each subtype
+    Nexp = sum(list(Nexp_subtype.values()))
+
     print('Redshift= %2.2f (%2.2f - %2.2f)' %(redshift,redshift1, redshift2))
     if Nexp > 1.0:
         Nexp_hi,Nexp_lo = poisson_error(Nexp)
@@ -537,8 +374,6 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Nexp_hi=Nexp_hi/temp
         Nexp_lo=Nexp_lo/temp
 
-    
-    Nobs = number_guess
     Nobs_hi, Nobs_lo = poisson_error(Nobs)
 
     Robs, Rerr_hi, Rerr_lo = 0.0, 0.0, 0.0
@@ -558,16 +393,13 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
         Rerr_hi  += R_hi - R_central  # upper error on this subtype's contribution
         Rerr_lo  += R_central - R_lo  # lower error on this subtype's contribution
 
-    #Robs = Nobs/(tc_tot*Dvol*area_frac)*1e4
-    #Rerr_hi = Nobs_hi/(tc_tot*Dvol*area_frac)*1e4-Robs
-    #Rerr_lo = Robs-Nobs_lo/(tc_tot*Dvol*area_frac)*1e4
 
     print('Total Control Time = %.2f days' %(tc_tot*365.25))
-    print('Rate from %2.1f expected events to %2.1f mag: R=%2.2f+%2.2f-%2.2f' %(number_guess, m50, Robs, Rerr_hi, Rerr_lo))
+    print('Rate from %2.1f expected events to %2.1f mag: R=%2.2f+%2.2f-%2.2f' %(Nobs, m50, Robs, Rerr_hi, Rerr_lo))
     print('Number expected to %2.1f mag from expected rate of R=%2.2f: N=%2.1f+%2.1f-%2.1f' %(m50, rate_guess*1e4, Nexp, Nexp_hi-Nexp, Nexp-Nexp_lo))
     print('-------\n')
     print('%.2f   %.2f   %.2f   %.2f   %.2f   %.2f   %.1f   %.1f   %.1f   %.1f'
-          %(redshift, redshift1, redshift2, Robs, Rerr_hi, Rerr_lo, Nexp, Nexp_hi-Nexp, Nexp-Nexp_lo, number_guess))
+          %(redshift, redshift1, redshift2, Robs, Rerr_hi, Rerr_lo, Nexp, Nexp_hi-Nexp, Nexp-Nexp_lo, Nobs))
     print('[%.2f,%.2f,%.2f,%.2f,%.2f,%.2f],'
           %(redshift, redshift1, redshift2, Robs, Rerr_hi, Rerr_lo))
     f=open(ratefile,'a')
@@ -576,10 +408,10 @@ def run(redshift2, redshift1, rate_guess, number_guess, diag_dir, base_root, snd
               Nexp, Nexp_hi-Nexp, Nexp-Nexp_lo, Nobs, tc_tot,
               area_frac*Dvol*1e-4, rate_guess*1e4)
             )
-    f,close()
+    f.close()
     if review:
-        plot_tc_per_type(tc_per_type, redshift1, redshift2, #subtype_combination,
-                         diag_dir, mag=m50)
+        plot_util.plot_tc_per_type(tc_per_type, redshift1, redshift2, #subtype_combination,
+                                   diag_dir, mag=m50)
     return([Nexp, Nexp_hi, Nexp_lo, tc_tot])
     
 
@@ -632,9 +464,9 @@ def main(configfile=None):
     run_name = config['run_name']
     base_root = config['base_root']
     sndata_root = config['sndata_root']
-    lightcurve_path = config['lightcurve_path']
     spectral_template_ref = config['spectral_template_ref']
-    sed_path = sndata_root + '/models/NON1ASED/%s' % spectral_template_ref
+    sed_path = sndata_root + '/models/NON1ASED/' + spectral_template_ref
+    lightcurve_path = base_root + '/broadband_lightcurves/' + spectral_template_ref
 
     clobber = json.loads(config['clobber'])
     verbose = json.loads(config['verbose'])
@@ -657,8 +489,8 @@ def main(configfile=None):
     passskiprow = config['passskiprow']
     passwavemult = config['passwavemult']
 
-    # color_cor = M_X(AB) - M_g(AB)
-    # Applied as: apparent_mag = lc + kcor + mu + dm + AL + color_cor
+    # Mg_to_MX = M_X(AB) - M_g(AB)
+    # Applied as: apparent_mag = lc + dm + Mg_to_Mx + Mx_to_MQ + AQ + mu -2.5log10(1+z)
     # Positive = X fainter than g, Negative = X brighter than g
     color_cor_file = config.get('color_correction_file', None)
     if color_cor_file is None:
@@ -688,8 +520,6 @@ def main(configfile=None):
             "a volumetric fraction file must be provided via 'vol_frac_set'."
         )
     
-    #processing 
-    #outfile = config['outfile_rates']
     outfile_rates = config['outfile_rates']
     outfile_numbers = config['outfile_numbers']
     multiproc = json.loads(config['multiproc'])
@@ -734,13 +564,13 @@ def main(configfile=None):
         diag_dir=None
 
     # Runs if your output file either does not exist or you are fine with replacing it
-    #if not os.path.isfile(outfile) or clobber:
     if not os.path.isfile(outfile_rates) or clobber:
         if falseevents and os.path.isfile(falsetable):
             tmp = pickle.load(open(falsetable,'rb'))
             redshifts = tmp[:,-2]
             redshifts=append(redshifts,tmp[-1,-1])
-            ng = tmp[:,1]
+            #ng = tmp[:,1]
+            Nobs= tmp[:,1]
         elif falseevents:
             print('No event table')
             print('Generating...')
@@ -749,13 +579,15 @@ def main(configfile=None):
             a2 = arange(0.5,10,0.5) #resolution not necessary at high-z
             redshifts=concatenate((a1,a2),)
             if redshifts[0]==0: redshifts[0]=0.001 #redhift==0 problem
-            ng = ones(len(redshifts)-1)
+            #ng = ones(len(redshifts)-1)
+            Nobs = ones(len(redshifts)-1)
             ## the following might be commented out for testing
             if redshift_binning is None:
                 redshift_bins = stats.mstats.mquantiles(redshifts, splits)
             else:
                 redshift_bins = array(redshift_binning)
-            ng, redshifts = histogram(redshifts, redshift_bins)
+            #ng, redshifts = histogram(redshifts, redshift_bins)
+            Nobs, redshifts = histogram(redshifts, redshift_bins)
         else:
             sn_table = pd.read_csv(eventtable, sep='\t')
             Nbins = Nbins
@@ -783,12 +615,15 @@ def main(configfile=None):
                 else:
                     redshift_bins = array(redshift_binning)
                 ### need a more elegant counter than this soon.
-                ng, redshifts = histogram(sne_select['Redshift'][~np.isnan(sne_select['Redshift'])], redshift_bins)
+                #ng, redshifts = histogram(sne_select['Redshift'][~np.isnan(sne_select['Redshift'])], redshift_bins)
+                Nobs, redshifts = histogram(sne_select['Redshift'][~np.isnan(sne_select['Redshift'])], redshift_bins)
 
                 ax = subplot(111)
                 style = {'facecolor': 'none', 'edgecolor': 'C0', 'linewidth': 3}
+                #ax.hist(sne_select['Redshift'][~np.isnan(sne_select['Redshift'])],
+                #        redshift_bins, label='%.1f total'%(sum(ng)),**style)
                 ax.hist(sne_select['Redshift'][~np.isnan(sne_select['Redshift'])],
-                        redshift_bins, label='%.1f total'%(sum(ng)),**style)
+                        redshift_bins, label='%.1f total'%(sum(Nobs)),**style)
                 ax.set_xlabel('Redshift')
                 ax.set_xlim(0,6)
                 if 'ia' in sntypes:
@@ -869,11 +704,13 @@ def main(configfile=None):
                     bins[-1]=redshift_tmp[ii][0]
 
                 # Determine the observed number of SNe are in each of your determinate redshift bins
-                ng = zeros(len(bins)-1,)
+                #ng = zeros(len(bins)-1,)
+                Nobs = zeros(len(bins)-1,)
                 for i,bin in enumerate(bins):
                     if i == 0: continue
                     ii = where((redshift_tmp>bins[i-1])&(redshift_tmp <= bins[i]))
-                    ng[i-1] = sum(rv[ii])*0.001
+                    #ng[i-1] = sum(rv[ii])*0.001
+                    Nobs[i-1] = sum(rv[ii])*0.001
                 redshifts = bins
         med_z = (redshifts[1:]+redshifts[:-1])/2.
         ## pdb.set_trace()
@@ -881,14 +718,16 @@ def main(configfile=None):
         # Analyzing any difference between cumulative redshift distribution total and sum of ng
         #print("pv[-1]:", pv[-1])
         #print("sum(rv)*dzza:", sum(rv)*dzza)
-        #print("sum(ng):", sum(ng))
+        ##print("sum(ng):", sum(ng))
+        #print("sum(Nobs):", sum(Nobs))
         #print("pv at bins[-1]:", pv[argmin(abs(redshift_tmp - bins[-1]))])
         #print("pv at bins[0]:", pv[argmin(abs(redshift_tmp - bins[0]))])
         #print("pv at bins[-1] - pv at bins[0]:", pv[argmin(abs(redshift_tmp - bins[-1]))] - pv[argmin(abs(redshift_tmp - bins[0]))])
 
         # Redshift Distribution Diagnostic Plots
         if review:
-            plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, diag_dir)
+            #plot_util.plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, diag_dir)
+            plot_util.plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, Nobs, sntypes, diag_dir)
 
 
         ########################################################
@@ -966,7 +805,6 @@ def main(configfile=None):
                 mags = array(list(set(survey[:,2])))
             except:
                 mags = array([survey[2]])
-        #numbers = []
         ctr = 0
 
         # Use the input detection efficiency table to obtain best-fit parameters describing detection efficiency curve
@@ -978,11 +816,8 @@ def main(configfile=None):
         popt, _ = curve_fit(det_eff, inj_mags, avg_recovery, p0=[m50_guess, max(avg_recovery), 0.3])
         m50_fit, T_fit, S_fit = popt 
 
-        #out_rate_file = outfile.replace('.pkl','.txt')
-        #if os.path.isfile(out_rate_file): os.remove(out_rate_file)
         # Remove the output file if it already exists
         if os.path.isfile(outfile_rates): os.remove(outfile_rates)
-        #f=open(out_rate_file,'a')
         f=open(outfile_rates,'a')
         f.write('#z,z_low,z_hi,R,R_+err,R_-err,N_exp,N_+err,N_-err,Nobs,tc_rest,Dvol,R_g\n')
         f.close()
@@ -992,7 +827,8 @@ def main(configfile=None):
                 ctr+=1
                 print('\n\n Iteration %d of %d\n\n' %(ctr,len(mags)*(len(redshifts)-1)))
                 print('Rate guess = %2.2f' %rg[i-1])
-                num, nhi, nlo, tc = run(redshifts[i], redshifts[i-1], rg[i-1], ng[i-1],
+                num, nhi, nlo, tc = run(redshift2=redshifts[i], redshift1=redshifts[i-1], rate_guess=rg[i-1], 
+                                        Nobs=Nobs[i-1],#ng[i-1],
                                         types=sntypes, passband=passband, m50=m50_fit, T=T_fit, S=S_fit,
                                         Nproc=Nproc,parallel=multiproc,
                                         verbose=verbose, extinction=extinction, obs_extin=obs_extin,

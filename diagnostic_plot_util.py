@@ -116,7 +116,8 @@ def plot_phase_color_correction(rest_age, color_cor_array, color_cor_raw,
 def plot_lightcurve_stages(rest_age, observed_frame_lightcurve,
                            Mg_to_Mx_color, Mx_to_MQ_color,
                            mu, da, dm, sens, type, redshift,
-                           best_rest_filter, observed_filter, diag_dir):
+                           best_rest_filter, observed_filter, ofilter_cen,
+                           diag_dir):
     """
     Plots the representative light curve at five stages of transformation
     following the updated BoomRate workflow:
@@ -162,6 +163,8 @@ def plot_lightcurve_stages(rest_age, observed_frame_lightcurve,
         filter X.
     observed_filter : str
         Path to the observed JWST filter file, used for the plot label.
+    ofilter_cen : float
+        Central wavelength corresponding to your observed JWST filter
     diag_dir : str
         Path to the diagnostic plots directory.
     """
@@ -188,11 +191,15 @@ def plot_lightcurve_stages(rest_age, observed_frame_lightcurve,
     stage5 = lc + dm + Mg_to_Mx_color + Mx_to_MQ_color + da + mu - 2.5*np.log10(1+redshift)
 
     stages  = [stage1, stage2, stage3, stage4, stage5]
-    titles  = [
+
+    # rest-frame central wavelength of the JWST filter at this redshift
+    jwst_restframe_cen = ofilter_cen / (1 + redshift)
+    
+    titles = [
         '(1) g-band absolute magnitude + dm',
         '(2) After Mg\u2192Mx color correction\n(g \u2192 %d nm SDSS)' % best_rest_filter,
-        '(3) After Mx\u2192MQ color correction\n(%d nm SDSS \u2192 %s rest-frame)' % (
-            best_rest_filter, jwst_name),
+        '(3) After Mx\u2192MQ color correction\n(%d nm SDSS \u2192 %s rest-frame (%.0f nm))' % (
+            best_rest_filter, jwst_name, jwst_restframe_cen),
         '(4) After host galaxy extinction',
         '(5) After distance modulus + K-correction\n(final %s apparent magnitude)' % jwst_name,
     ]
@@ -441,3 +448,107 @@ def plot_smoothing_diagnostic(observed_frame_lightcurve_unsmoothed, observed_fra
     tight_layout()
     savefig('%s/%s_smoothing_diagnostic.png' % (diag_dir, type))
     clf()
+
+# -----------------------------------------------------------------------------------------------------
+
+def plot_redshift_dist(redshift_tmp, rv, dzza, redshifts, ng, sntypes, diag_dir):
+    """
+    Plots the smoothed redshift probability distribution and cumulative distribution
+    with redshift bin boundaries and observed SN counts per bin.
+    
+    Parameters
+    ----------
+    redshift_tmp: array 
+        Redshift grid from 0 to 10 in steps of dzza
+    rv: array
+        Summed redshift probability distribution across all SNe
+    dzza: float
+        Redshift grid step size
+    redshifts: array
+        Bin edges
+    ng: array
+        Observed number of SNe in each bin
+    sntypes: list
+        List of SN types being considered
+    run_name: str
+        Name of the current run, used for the output filename
+    """
+
+    smooth_rv = convolve(rv*dzza, Gaussian1DKernel(10), boundary='extend')
+
+    fig, (ax1, ax2) = subplots(1, 2, figsize=(14, 5))
+
+    # Left panel: redshift distribution 
+    ax1.plot(redshift_tmp, smooth_rv, 'k-')
+    ax1.set_xlabel('Redshift')
+    ax1.set_xlim(0, 6)
+    if 'ia' in sntypes:
+        ax1.set_ylabel('Number of SNeIa')
+    else:
+        ax1.set_ylabel('Number of CCSNe')
+
+    # Shade each redshift bin and label with observed counts
+    colors = ['#d0e8f0', '#f0d8c0', '#d0f0d0', '#f0d0e8', '#e8f0d0']
+    for i in range(len(redshifts)-1):
+        ax1.axvspan(redshifts[i], redshifts[i+1], alpha=0.3, color=colors[i % len(colors)],
+                    label='z=%.2f-%.2f, N=%.1f' %(redshifts[i], redshifts[i+1], ng[i]))
+    ax1.legend(loc=1, fontsize=9, title='Total N=%.1f' %sum(ng), title_fontsize=10)
+
+    # Right panel: cumulative distribution 
+    ax2.plot(redshift_tmp, cumsum(rv)*dzza, 'k-', label='%.1f Total' %(cumsum(rv)[-1]*dzza))
+    ax2.set_xlabel('Redshift')
+    ax2.set_xlim(0, 6)
+    if 'ia' in sntypes:
+        ax2.set_ylabel('Cumulative number of SNeIa')
+    else:
+        ax2.set_ylabel('Cumulative number of CCSNe')
+
+    # Show bin boundaries as vertical lines
+    for z in redshifts:
+        ax2.axvline(z, color='gray', ls='--', lw=1)
+    ax2.legend(loc=2, fontsize=9)
+
+    tight_layout()
+    savefig('%s/redshift_dist.png' % diag_dir)
+    clf()
+
+# -----------------------------------------------------------------------------------------------------
+
+def plot_tc_per_type(tc_per_type, z_low, z_high, diag_dir, mag=None):
+    """
+    Per-z-bin diagnostic: stacked single bar showing each subtype's control time
+    """
+    if not tc_per_type:
+        return
+    types = list(tc_per_type.keys())
+    contributions = array([tc_per_type[t] for t in types]) * 365.25  # rest-frame days
+    total = contributions.sum()
+    palette = cm.tab10(linspace(0, 1, max(len(types), 3)))
+
+    fig, ax = subplots(figsize=(5, 6))
+    bottom = 0.0
+    for t_idx, t in enumerate(types):
+        h = contributions[t_idx]
+        ax.bar(0, h, 0.6, bottom=bottom,
+               color=palette[t_idx % len(palette)], edgecolor='white', linewidth=0.5,
+               label='%s  %.2f d' % (t.upper(), h))
+        bottom += h
+
+    ax.set_xticks([0])
+    ax.set_xticklabels(['z=%.2f-%.2f' % (z_low, z_high)])
+    ax.set_ylabel('Control time (rest-frame days)')
+    title = 'tc_tot = %.2f d' % total
+    if mag is not None:
+        title += '  | m50 %.1f' % mag
+    ax.set_title(title)
+    ax.legend(loc='center left', bbox_to_anchor=(1.02, 0.5),
+              title='Subtype contribution', frameon=False)
+    ax.margins(x=0.4)
+    tight_layout()
+
+    if not os.path.isdir('diagnostic_plots'):
+        os.makedirs('diagnostic_plots')
+    savefig('%s/tc_per_type_z%.2f-%.2f.png' % (diag_dir, z_low, z_high),
+            bbox_inches='tight')
+    clf()
+    close('all')
