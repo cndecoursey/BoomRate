@@ -20,10 +20,14 @@ The .DAT format is:
     END:
 
 Usage:
+    Set MODE = 'CC' to convert all .SED files in the NON1ASED directory.
+    Set MODE = 'Ia' to convert the single Hsiao07.dat file.
+
     python sed_to_dat.py
 
 Output:
-    One .DAT file per .SED file in the output directory.
+    CC mode : one .DAT file per .SED file written to dat_output_dir_CC.
+    Ia mode : one .DAT file (Hsiao07.DAT) written to dat_output_dir_Ia.
 """
 
 import os
@@ -34,11 +38,22 @@ from scipy.interpolate import interp1d
 # -----------------------------------------------------------------------
 # CONFIGURATION
 # -----------------------------------------------------------------------
-sndata_root    = '/Users/christadecoursey/Documents/SNANA/SNANA_2025'
-boomrate_root  = '/Users/christadecoursey/Documents/JADES/SN_Classification_and_Rates_Paper/classification/BoomRate'
-spec_temp_ref  = 'NON1ASED.J17_CC'
-sed_dir        = sndata_root + '/models/NON1ASED/' + spec_temp_ref  # directory with .SED files 
-dat_output_dir = boomrate_root + '/broadband_lightcurves/' + spec_temp_ref  # where to write .DAT files
+
+# Set to 'CC' to process all CC SED files, or 'Ia' to process Hsiao07.dat
+MODE = 'Ia'
+
+sndata_root   = '/Users/christadecoursey/Documents/SNANA/SNANA_2025'
+boomrate_root = '/Users/christadecoursey/Documents/JADES/SN_Classification_and_Rates_Paper/classification/BoomRate'
+
+# --- CC mode paths ---
+spec_temp_ref    = 'NON1ASED.J17_CC'
+sed_dir          = sndata_root + '/models/NON1ASED/' + spec_temp_ref
+dat_output_dir_CC = boomrate_root + '/broadband_lightcurves/' + spec_temp_ref
+
+# --- Ia mode paths ---
+hsiao_sed_path   = sndata_root + '/snsed/Hsiao07.dat'
+dat_output_dir_Ia = boomrate_root + '/broadband_lightcurves/Hsiao07'
+
 # -----------------------------------------------------------------------
 
 # SDSS filter labels and paths as they appear in .DAT files
@@ -106,23 +121,23 @@ def synthetic_mag_AB(wave_sed, flux_sed, wave_filt, trans_filt):
     # np.clip removes any tiny negative values from interpolation near zero.
     trans       = np.clip(f_interp(wave_sed), 0., None)
 
-    # Compute the wavelength step size at each point using central differences, handling 
+    # Compute the wavelength step size at each point using central differences, handling
     # non-uniform wavelength sampling correctly. More accurate than assuming a constant step size.
     dlambda     = np.gradient(wave_sed)
     c           = 2.998e18  # speed of light in AA/s
 
     # Computes the numerator of the AB magnitude formula by integrating the SED through the filter:
     # numerator = integral(F_lambda * T(lambda) * dlambda)
-    # This comes from converting the AB frequency-space formula to wavelength space — the 
-    # F_lambda * lambda^2/c from converting f_nu to f_lambda and the c/lambda^2 from converting dnu 
+    # This comes from converting the AB frequency-space formula to wavelength space — the
+    # F_lambda * lambda^2/c from converting f_nu to f_lambda and the c/lambda^2 from converting dnu
     # to dlambda cancel exactly, leaving just F_lambda * T * dlambda
     numerator   = np.sum(flux_sed * trans * dlambda)
 
     # Computes the AB zero point denominator:
     # denominator = integral(T(lambda) * c/lambda^2 * dlambda)
-    # This represents what a hypothetical flat f_nu source (the AB reference spectrum, 
-    # defined as constant f_nu = 3631 Jy) contributes through this filter in frequency space, 
-    # converted to wavelength space. The c/lambda^2 factor is the Jacobian of the frequency-to-wavelength 
+    # This represents what a hypothetical flat f_nu source (the AB reference spectrum,
+    # defined as constant f_nu = 3631 Jy) contributes through this filter in frequency space,
+    # converted to wavelength space. The c/lambda^2 factor is the Jacobian of the frequency-to-wavelength
     # conversion for the reference source.
     denominator = np.sum(trans * c / wave_sed**2 * dlambda)
 
@@ -131,10 +146,10 @@ def synthetic_mag_AB(wave_sed, flux_sed, wave_filt, trans_filt):
 
     # Compute the final AB magnitude:
     # m_AB = -2.5 * log10(numerator/denominator) - 48.6
-    # The -48.6 is the AB magnitude zero point in CGS units — it comes from the definition 
-    # of the AB system where a source with constant f_nu = 3631 Jy has magnitude 0 in all filters. 
-    # In CGS units, 3631 Jy = 3.631e-20 erg/s/cm²/Hz, and -2.5*log10(3.631e-20) ≈ 48.6. This constant 
-    # only gives the correct absolute AB magnitude if F_lambda is in erg/s/cm²/Å — if the units are 
+    # The -48.6 is the AB magnitude zero point in CGS units — it comes from the definition
+    # of the AB system where a source with constant f_nu = 3631 Jy has magnitude 0 in all filters.
+    # In CGS units, 3631 Jy = 3.631e-20 erg/s/cm²/Hz, and -2.5*log10(3.631e-20) ≈ 48.6. This constant
+    # only gives the correct absolute AB magnitude if F_lambda is in erg/s/cm²/Å — if the units are
     # different, the result is offset by a constant that gets absorbed into magoff.
     return -2.5 * np.log10(numerator / denominator) - 48.6
 
@@ -176,6 +191,45 @@ def read_sed_file(sed_path):
     return sntype, np.array(sed_data)
 
 
+def read_hsiao_file(sed_path):
+    """
+    Reads the Hsiao07.dat SED file from SNANA_2025/snsed/.
+
+    The Hsiao file has no header keywords; it contains three whitespace-
+    separated columns: phase (days), wavelength (AA), f_lambda flux.
+    Comment lines beginning with '#' and blank lines are skipped.
+    SNTYPE is hardcoded to 'Ia'.
+
+    Parameters
+    ----------
+    sed_path : str
+        Path to Hsiao07.dat.
+
+    Returns
+    -------
+    sntype : str
+        Always 'Ia'.
+    sed_data : numpy.ndarray
+        2D array with columns: phase (days), wavelength (AA), f_lambda flux.
+    """
+    sntype   = 'Ia'
+    sed_data = []
+
+    with open(sed_path, 'r') as f:
+        for line in f:
+            if line.startswith('#') or line.strip() == '':
+                continue
+            try:
+                vals = list(map(float, line.split()))
+                if len(vals) >= 3:
+                    # keep only the first three columns (phase, wave, flux)
+                    sed_data.append(vals[:3])
+            except:
+                continue
+
+    return sntype, np.array(sed_data)
+
+
 def write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters):
     """
     Writes a .DAT format light curve file compatible with read_lc_model().
@@ -185,7 +239,7 @@ def write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters):
     dat_path : str
         Output path for the .DAT file.
     sntype : str
-        SN subtype label (e.g. 'Ic').
+        SN subtype label (e.g. 'Ic', 'Ia').
     phases : list of float
         Rest-frame phases in days.
     epoch_mags : list of list
@@ -206,49 +260,29 @@ def write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters):
         f.write('END: \n')
 
 
-# -----------------------------------------------------------------------
-# LOAD SDSS FILTERS ONCE
-# -----------------------------------------------------------------------
+def process_sed(model_name, sntype, sed_data, dat_path, sdss_filter_data):
+    """
+    Computes synthetic AB magnitudes for all epochs in sed_data and writes
+    the output .DAT file.
 
-print('Loading SDSS filters...')
-sdss_filter_data = []
-for label, fname, fpath in sdss_filters:
-    wave_f, trans_f = load_filter(fpath)
-    sdss_filter_data.append((label, fname, wave_f, trans_f))
-    cen = np.sum(wave_f * trans_f * wave_f) / np.sum(trans_f * wave_f)
-    print('  SDSS %s: central wavelength = %.0f AA' % (fname, cen))
+    Parameters
+    ----------
+    model_name : str
+        Human-readable label used only for print statements.
+    sntype : str
+        SN subtype (e.g. 'Ia', 'Ic').
+    sed_data : numpy.ndarray
+        2D array (N_rows x 3) with columns: phase, wavelength, flux.
+    dat_path : str
+        Full output path for the .DAT file.
+    sdss_filter_data : list of tuples
+        Loaded filter data: (label, fname, wave_f, trans_f).
 
-# -----------------------------------------------------------------------
-# PROCESS EACH .SED FILE
-# -----------------------------------------------------------------------
-
-os.makedirs(dat_output_dir, exist_ok=True)
-
-sed_files = sorted(glob.glob(os.path.join(sed_dir, '*.SED')))
-print('\nFound %d .SED files to convert' % len(sed_files))
-
-n_success = 0
-n_failed  = 0
-
-for sed_path in sed_files:
-    model_name = os.path.basename(sed_path).replace('.SED', '')
-    dat_path   = os.path.join(dat_output_dir, model_name + '.DAT')
-
-    print('\nConverting %s...' % model_name)
-
-    # read the SED file
-    sntype, sed_data = read_sed_file(sed_path)
-
-    if sntype is None:
-        print('  WARNING: SNTYPE not found in header, skipping')
-        n_failed += 1
-        continue
-
-    if len(sed_data) == 0:
-        print('  WARNING: no SED data found, skipping')
-        n_failed += 1
-        continue
-
+    Returns
+    -------
+    success : bool
+        True if the file was written successfully.
+    """
     print('  SNTYPE: %s' % sntype)
     print('  SED data shape: %s' % str(sed_data.shape))
 
@@ -257,7 +291,6 @@ for sed_path in sed_files:
     print('  N epochs: %d  (%.1f to %.1f days)' % (
           len(phases), min(phases), max(phases)))
 
-    # compute synthetic AB magnitude in each SDSS filter at each phase
     epoch_mags = []
     n_baseline = 0
     n_computed = 0
@@ -269,13 +302,14 @@ for sed_path in sed_files:
         flux = sed_data[idx, 2]
 
         # sort by wavelength and remove unphysical values
-        sort_idx     = np.argsort(wave)
-        wave, flux   = wave[sort_idx], flux[sort_idx]
-        valid        = wave > 100.
-        wave, flux   = wave[valid], flux[valid]
+        sort_idx   = np.argsort(wave)
+        wave, flux = wave[sort_idx], flux[sort_idx]
+        valid      = wave > 100.
+        wave, flux = wave[valid], flux[valid]
 
         # check if SN has flux at this phase
-        if len(wave) < 2 or np.sum(flux) == 0.:
+        #if len(wave) < 2 or np.sum(flux) == 0.:
+        if len(wave) < 2 or np.sum(flux) < 1e-30:
             # pre-explosion baseline -- use placeholder magnitude
             mags = [BASELINE_MAG] * len(sdss_filters)
             n_baseline += 1
@@ -301,18 +335,91 @@ for sed_path in sed_files:
           phases[peak_idx],
           '  '.join(['%.2f' % m for m in peak_mags])))
 
-    # write the .DAT file
     write_dat_file(dat_path, sntype, phases, epoch_mags, sdss_filters)
     print('  Written to %s' % dat_path)
-    n_success += 1
+    return True
+
 
 # -----------------------------------------------------------------------
-# SUMMARY
+# LOAD SDSS FILTERS ONCE
 # -----------------------------------------------------------------------
 
-print('\n' + '='*60)
-print('Conversion complete.')
-print('  Successful: %d' % n_success)
-print('  Failed:     %d' % n_failed)
-print('  Output directory: %s' % dat_output_dir)
-print('='*60)
+print('Loading SDSS filters...')
+sdss_filter_data = []
+for label, fname, fpath in sdss_filters:
+    wave_f, trans_f = load_filter(fpath)
+    sdss_filter_data.append((label, fname, wave_f, trans_f))
+    cen = np.sum(wave_f * trans_f * wave_f) / np.sum(trans_f * wave_f)
+    print('  SDSS %s: central wavelength = %.0f AA' % (fname, cen))
+
+# -----------------------------------------------------------------------
+# MODE DISPATCH
+# -----------------------------------------------------------------------
+
+if MODE == 'Ia':
+    # -----------------------------------------------------------------------
+    # Ia MODE: convert single Hsiao07.dat file
+    # -----------------------------------------------------------------------
+    print('\n--- Ia mode: converting Hsiao07.dat ---')
+    os.makedirs(dat_output_dir_Ia, exist_ok=True)
+
+    model_name = 'Hsiao07'
+    dat_path   = os.path.join(dat_output_dir_Ia, model_name + '.DAT')
+
+    print('\nConverting %s...' % model_name)
+    sntype, sed_data = read_hsiao_file(hsiao_sed_path)
+
+    if len(sed_data) == 0:
+        print('  ERROR: no SED data found in %s' % hsiao_sed_path)
+    else:
+        process_sed(model_name, sntype, sed_data, dat_path, sdss_filter_data)
+
+    print('\n' + '='*60)
+    print('Conversion complete.')
+    print('  Output: %s' % dat_path)
+    print('='*60)
+
+elif MODE == 'CC':
+    # -----------------------------------------------------------------------
+    # CC MODE: convert all .SED files in the NON1ASED directory
+    # -----------------------------------------------------------------------
+    print('\n--- CC mode: converting all .SED files in %s ---' % sed_dir)
+    os.makedirs(dat_output_dir_CC, exist_ok=True)
+
+    sed_files = sorted(glob.glob(os.path.join(sed_dir, '*.SED')))
+    print('\nFound %d .SED files to convert' % len(sed_files))
+
+    n_success = 0
+    n_failed  = 0
+
+    for sed_path in sed_files:
+        model_name = os.path.basename(sed_path).replace('.SED', '')
+        dat_path   = os.path.join(dat_output_dir_CC, model_name + '.DAT')
+
+        print('\nConverting %s...' % model_name)
+        sntype, sed_data = read_sed_file(sed_path)
+
+        if sntype is None:
+            print('  WARNING: SNTYPE not found in header, skipping')
+            n_failed += 1
+            continue
+
+        if len(sed_data) == 0:
+            print('  WARNING: no SED data found, skipping')
+            n_failed += 1
+            continue
+
+        if process_sed(model_name, sntype, sed_data, dat_path, sdss_filter_data):
+            n_success += 1
+        else:
+            n_failed += 1
+
+    print('\n' + '='*60)
+    print('Conversion complete.')
+    print('  Successful: %d' % n_success)
+    print('  Failed:     %d' % n_failed)
+    print('  Output directory: %s' % dat_output_dir_CC)
+    print('='*60)
+
+else:
+    print('ERROR: unknown MODE "%s". Set MODE to "CC" or "Ia".' % MODE)

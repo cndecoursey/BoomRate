@@ -29,7 +29,7 @@ rcParams['font.size']=16.0
 
 def run(redshift, baseline, base_root, sndata_root, lightcurve_path, sed_path, diag_dir,
         type, m50=30, T=1.0, S=0.3, dstep=3, dmstep=0.5, dastep=0.5, lc_smoothing_window=3,
-        parallel=False, extinction=True, obs_extin='nominal', Nproc=23, prev=45.,
+        parallel=False, extinction=True, obs_extin=None, Nproc=23, prev=45.,
         passband = None, passskiprow=1, passwavemult=1000.,
         verbose=False, review=False, biascor='flat',
         cosmology=None,color_corrections=None, absmags=None):
@@ -58,14 +58,9 @@ def run(redshift, baseline, base_root, sndata_root, lightcurve_path, sed_path, d
     # Build a dict that maps filter central wavelengths to filter file paths, which will
     # be used later to find the best matching rest-frame filter for the K-correction
     filter_dict={}
-    if 'ia' in type:
-        for bessel_filter in glob.glob(sndata_root +'/filters/Bessell90/Bessell90_K09/Bessell90_?.dat'):
-            elam = get_central_wavelength(bessel_filter, wavemult=0.1) # wavemult converts Ang to nm
-            filter_dict[elam]=bessel_filter
-    else:
-        for sdss_filter in glob.glob(sndata_root+'/filters/SDSS/SDSS_web2001/?.dat'):
-            elam = get_central_wavelength(sdss_filter, wavemult=0.1) # wavemult converts Ang to nm
-            filter_dict[elam]=sdss_filter
+    for sdss_filter in glob.glob(sndata_root+'/filters/SDSS/SDSS_web2001/?.dat'):
+        elam = get_central_wavelength(sdss_filter, wavemult=0.1) # wavemult converts Ang to nm
+        filter_dict[elam]=sdss_filter
 
     # Observed filter
     observed_filter = passband # you are forced to specify a passband when calling run(); cannot use None
@@ -74,79 +69,73 @@ def run(redshift, baseline, base_root, sndata_root, lightcurve_path, sed_path, d
 
     # Rest-frame Lightcurve
     if 'ia' not in type:
-        #if verbose: print('getting best rest-frame lightcurve...')
 
         # Load and interpolate non1a SED templates onto a uniform rest-frame age grid, keyed by filter central wavelength
         rest_age,rflc,models_used = rest_frame_lightcurve(type,lightcurve_path,sed_path,sndata_root,dstep=dstep,verbose=verbose)
 
-        # Plot the full restframe lightcurves for each model in used_models, for each available restframe filter
-        if review:
-            plot_util.plot_restframe_lightcurves(rflc=rflc, rest_age=rest_age, models_used=models_used, 
-                                                 type=type[0],diag_dir=diag_dir)
+    elif 'ia' in type:
 
-        # Find the SDSS filter that most closely matches the rest-frame wavelength of your observed filter
-        best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
-        if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
+        # Load and interpolate Ia SED template onto a uniform rest-frame age grid, keyed by filter central wavelength
+        rest_age,rflc,models_used = rest_frame_Ia_lightcurve(lightcurve_path,sed_path,sndata_root,dstep=dstep,verbose=verbose)
 
-        # Note: despite the name, this is still in the rest frame at this point.
-        # The conversion to observed frame (K-correction + distance modulus) happens
-        # inside the extinction/luminosity function loop below.
-        observed_frame_lightcurve=mean_pop(mag_array=array(rflc[best_rest_filter]), review=review, 
-                                           diag_dir=diag_dir, rest_age=rest_age, type=type[0])#-template_peak[type[0]]+absmags[type[0]][0]
-        observed_frame_lightcurve_unsmoothed = observed_frame_lightcurve.copy()
+    # Plot the full restframe lightcurves for each model in used_models, for each available restframe filter
+    if review:
+        plot_util.plot_restframe_lightcurves(rflc=rflc, rest_age=rest_age, models_used=models_used, 
+                                             type=type[0],diag_dir=diag_dir)
 
-        # Smooth the representative light curve along the age axis using a Gaussian kernel. 
-        # Gaussian1DKernel(dstep) creates a Gaussian with a standard deviation of dstep age steps 
-        # So with dstep=5, it smooths over a scale of 5 age steps × 5 days/step = 25 days.
-        observed_frame_lightcurve[:,0]= convolve(observed_frame_lightcurve[:,0], Gaussian1DKernel(lc_smoothing_window), boundary='extend') 
+    # Find the SDSS filter that most closely matches the rest-frame wavelength of your observed filter
+    best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
+    if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
 
-        # Plot the representative light curve before/after smoothing to ensure smoothing is reasonable
-        if review:
-            plot_util.plot_smoothing_diagnostic(observed_frame_lightcurve_unsmoothed=observed_frame_lightcurve_unsmoothed, 
-                                                observed_frame_lightcurve_smoothed=observed_frame_lightcurve, 
-                                                rest_age=rest_age, type=type[0], diag_dir=diag_dir, dstep=dstep)
+    # Note: despite the name, this is still in the rest frame at this point.
+    # The conversion to observed frame (K-correction + distance modulus) happens
+    # inside the extinction/luminosity function loop below.
+    observed_frame_lightcurve=mean_pop(mag_array=array(rflc[best_rest_filter]), review=review, 
+                                       diag_dir=diag_dir, rest_age=rest_age, type=type[0])
+    observed_frame_lightcurve_unsmoothed = observed_frame_lightcurve.copy()
 
-        observed_frame_lightcurve_unanchored = observed_frame_lightcurve.copy()
-        lc_normalized_to_0 = observed_frame_lightcurve - nanmin(observed_frame_lightcurve[:,0])
+    # Smooth the representative light curve along the age axis using a Gaussian kernel. 
+    # Gaussian1DKernel(dstep) creates a Gaussian with a standard deviation of dstep age steps 
+    # So with dstep=5, it smooths over a scale of 5 age steps × 5 days/step = 25 days.
+    observed_frame_lightcurve[:,0]= convolve(observed_frame_lightcurve[:,0], Gaussian1DKernel(lc_smoothing_window), boundary='extend') 
 
-        # Anchor composite light curve to your choice of mean peak absolute magnitude by shifting its 
-        # brightest point to absmags[type[0]][0]
-        observed_frame_lightcurve = observed_frame_lightcurve - nanmin(observed_frame_lightcurve[:,0]) + absmags[type[0]][0]
+    # Plot the representative light curve before/after smoothing to ensure smoothing is reasonable
+    if review:
+        plot_util.plot_smoothing_diagnostic(observed_frame_lightcurve_unsmoothed=observed_frame_lightcurve_unsmoothed, 
+                                            observed_frame_lightcurve_smoothed=observed_frame_lightcurve, 
+                                            rest_age=rest_age, type=type[0], diag_dir=diag_dir, dstep=dstep)
 
-        if review:
-            plot_util.plot_anchoring_diagnostic(observed_frame_lightcurve_unanchored, lc_normalized_to_0, 
-                                                observed_frame_lightcurve,rest_age, type[0], diag_dir, absmags)
+    observed_frame_lightcurve_unanchored = observed_frame_lightcurve.copy()
+    lc_normalized_to_0 = observed_frame_lightcurve - nanmin(observed_frame_lightcurve[:,0])
+
+    # Anchor composite light curve to your choice of mean peak absolute magnitude by shifting its 
+    # brightest point to absmags[type[0]][0]
+    observed_frame_lightcurve = observed_frame_lightcurve - nanmin(observed_frame_lightcurve[:,0]) + absmags[type[0]][0]
+
+    if review:
+        plot_util.plot_anchoring_diagnostic(observed_frame_lightcurve_unanchored, lc_normalized_to_0, 
+                                            observed_frame_lightcurve,rest_age, type[0], diag_dir, absmags)
 
     # Get the Type Ia rest-frame light curve
-    else:
-        #if verbose: print('getting best rest-frame lightcurve SNIA ...')
-        rest_age, rflc = rest_frame_Ia_lightcurve(dstep=dstep,verbose=verbose)
-        best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
-        if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
-        observed_frame_lightcurve = zeros((len(array(rflc[best_rest_filter])),5))
-        observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags[type[0]][0]
+    #else:
+    #    #if verbose: print('getting best rest-frame lightcurve SNIA ...')
+    #    rest_age, rflc = rest_frame_Ia_lightcurve(dstep=dstep,verbose=verbose)
+    #    best_rest_filter = min(rflc.keys(), key=lambda x:abs(x-(ofilter_cen/(1+redshift))))
+    #    if verbose: print('best rest frame filter match wavelength= %4.1f nm'%best_rest_filter)
+    #    observed_frame_lightcurve = zeros((len(array(rflc[best_rest_filter])),5))
+    #    observed_frame_lightcurve[:,0] = array(rflc[best_rest_filter]) - template_peak[type[0]]+absmags[type[0]][0]
 
     # Get the spectral templates
     model_pkl = 'SEDs_'+'_'.join(type)+'.pkl'
     if not os.path.isfile(model_pkl):
-        pkl_file = open(model_pkl,'wb')
-        #if verbose: print('... loading model SEDs')
         models_used_dict={}
         total_age_set=[]
-        if 'ia' in type:
-            models_used = ['Hsiao07']#'Foley07_lowz_uhsiao']
-            sed_path = sndata_root +'/snsed'
-        if 'slsn' in type:
-            models_used = ['slsn_blackbody']
 
         for model in models_used:
             #print('...... %s' %model)
             if 'ia' not in type:
-                try:
-                    data = loadtxt(os.path.join(sed_path,model+'.SED'))
-                except:
-                    print('testing', os.path.join(sed_path,model+'.SED'))
-                    pdb.set_trace()
+                #try:
+                data = loadtxt(os.path.join(sed_path,model+'.SED'))
             else:
                 data = loadtxt(os.path.join(sed_path,model+'.dat'))
 
@@ -160,8 +149,9 @@ def run(redshift, baseline, base_root, sndata_root, lightcurve_path, sed_path, d
                 if age not in total_age_set:
                     total_age_set.append(age)
 
-        pickle.dump(models_used_dict,pkl_file)
-        pkl_file.close()
+        with open(model_pkl, 'wb') as pkl_file:
+            pickle.dump(models_used_dict, pkl_file)
+
     else:
         pkl_file = open(model_pkl,'rb')
         #if verbose: print('reading %s saved file' %model_pkl)
@@ -327,11 +317,8 @@ def run(redshift, baseline, base_root, sndata_root, lightcurve_path, sed_path, d
         # extincted SNe (da large) get low weight if such high extinctions are rare for this SN type, 
         # while moderately extincted SNe get higher weight.
         if extinction:
-            if 'ia' in type:
-                P_ext = ext_dist_Ia(da, observed_filter, redshift, passskiprow, passwavemult, sndata_root)
-            else:
-                # Get the host extinction probability
-                P_ext = prob_Av(Av=Av, obs_extin=obs_extin)
+            # Get the host extinction probability
+            P_ext = prob_Av(Av=Av, obs_extin=obs_extin, base_root=base_root)
         else:
             P_ext=1.0
         ext_normalization += P_ext*dastep # this should technically be the Av step (not AQ step), but cancels later
@@ -672,18 +659,59 @@ def rest_frame_lightcurve(types,lightcurve_path,sed_path,sndata_root,dstep=3,ver
 
 # -----------------------------------------------------------------------------------------------------
 
-def rest_frame_Ia_lightcurve(dstep=3, verbose=True):
-    models_dir = sndata_root+'/models/mlcs2k2/mlcs2k2.v007/'
-    rest_age = arange(-20,730.5,dstep)
-    ## rest_age= arange(-20, -7, dstep) ## to limit to pre-peak discoveries
+def rest_frame_Ia_lightcurve(lightcurve_path,sed_path,sndata_root,dstep=3,verbose=True):
+    """
+    Loads and interpolates the Ia SED template light curves onto a uniform
+    rest-frame age grid for a given set of SN subtypes. 
+
+    Parameters
+    ----------
+    lightcurve_path: str
+    sndata_root: str
+    dstep: float, optional
+        Step size in days for the rest-frame age grid. Default is 3.
+    verbose: bool, optional
+
+    Returns
+    -------
+    rest_age: numpy.ndarray
+        1D array of rest-frame ages in days from -50 to 730.5 in steps of dstep.
+        This is the uniform time axis all light curves are resampled onto.
+    mag_dict: dict
+        Dictionary mapping filter central wavelengths (int, in nm) to
+        lists of light curve magnitude arrays. Each list contains one
+        array per template model that passed the type and magoff checks,
+        resampled onto rest_age and normalized by the magnitude offset.
+        mag_dict[filter] has shape (N_models, N_ages).
+    models_used : list of str
+        List of template model names (filenames without .DAT extension)
+        that were successfully loaded and included in mag_dict.
+    """
+    models = glob.glob(lightcurve_path+'/*.DAT')
+    rest_age = arange(-50,730.5,dstep)
     mag_dict={}
-    for model in glob.glob(models_dir+'vectors_?.dat'):
-        data = loadtxt(model)
-        junk, yy = u.recast(rest_age, 0., data[:,0],data[:,1])
-        filter = os.path.basename(model).split('_')[1][0]
-        elam = get_central_wavelength(sndata_root+'/filters/Bessell90/Bessell90_K09/Bessell90_'+filter+'.dat', wavemult=0.1)
-        mag_dict[elam]=yy
-    return(rest_age,mag_dict)
+    models_used=[]
+    for model in models:
+        filters,mdata,type=read_lc_model(model,sndata_root)
+        
+        # Models need anchoring
+        # Append a row at the end of mdata with your largest rest_age (e.g., 730.5) and mag=5
+        # for each filter. This prevents wild extrapolation beyond last datapoint
+        append(mdata, zeros(len(mdata[0]),))
+        mdata[-1][0]=rest_age[-1]; mdata[-1,1:]=5.00
+
+        for cnt,filter in enumerate(filters):
+
+            # Interpolate this model's light curve onto the uniform rest_age grid
+            # new_y is the light curve resampled at every age step, ready to be compared across models.
+            (junk,new_y)=u.recast(rest_age,0.,mdata[:,0],mdata[:,cnt+1])
+            if os.path.basename(model)[:-4] not in models_used:
+                models_used.append(os.path.basename(model)[:-4])
+            try:
+                mag_dict[filter].append(new_y)
+            except:
+                mag_dict[filter]=[new_y]
+    return(rest_age,mag_dict,models_used)
   
 # -----------------------------------------------------------------------------------------------------
 
@@ -792,7 +820,7 @@ def Mx_to_MQ(rest_age, models_used_dict, best_rest_filter, filter_dict, observed
             idx = np.where(np.abs(spec[:, 0] - age) < 3.)[0]
             if len(idx) == 0:
                 continue
-            if np.sum(spec[idx, 2]) == 0.:
+            if np.sum(spec[idx, 2]) < 1e-30:
                 continue
 
             wave = spec[idx, 1]
@@ -850,24 +878,6 @@ def Mx_to_MQ(rest_age, models_used_dict, best_rest_filter, filter_dict, observed
 
 # -----------------------------------------------------------------------------------------------------
 
-def ext_dist_Ia(ext,observed_filter,redshift,passskiprow,passwavemult,sndata_root):
-    from scipy.optimize import curve_fit
-    f1 = sndata_root +'/filters/Bessell90/Bessell90_K09/Bessell90_V.dat'
-    w1 = get_central_wavelength(f1, wavemult=0.1)/1e3
-    w2 = get_central_wavelength(observed_filter, skip=passskiprow, wavemult=passwavemult)/1e3/(1.0+redshift)
-    A_1 = calzetti(array([w1]))
-    A_2 = calzetti(array([w2]))
-
-
-    Jha = loadtxt(base_root+'/templates/Jha_ext.txt')
-    Jha[:,0] = Jha[:,0]/A_1*A_2
-    p0 = [1.,1.]
-    p1,pcov = curve_fit(u.exp_fit,Jha[:,0], Jha[:,1], p0=p0)
-    norm = quad(u.exp_fit,0., inf, args=tuple(p1))[0]
-    return(u.exp_fit(ext,*p1)/norm)
-
-# -----------------------------------------------------------------------------------------------------
-
 def get_Av_over_AQ_calzetti_ratio(observed_filter,redshift,passskiprow,passwavemult,sndata_root,Rv=4.05):
     V_trans = sndata_root + '/filters/Bessell90/Bessell90_K09/Bessell90_V.dat'
     wave_v = get_central_wavelength(V_trans, wavemult=0.1)/1e3
@@ -880,25 +890,86 @@ def get_Av_over_AQ_calzetti_ratio(observed_filter,redshift,passskiprow,passwavem
 
 # -----------------------------------------------------------------------------------------------------
 
-def prob_Av(Av, obs_extin='nominal'):
-    from scipy.optimize import curve_fit
+def prob_Av(Av, obs_extin=None, base_root=None, _jha_cache={}):
+    """
+    Returns P(Av) for a given V-band extinction value.
 
-    if obs_extin=='nominal': #shallowest
+    For CC subtypes, evaluates a one-sided exponential distribution
+    P(Av) = lambda_v * exp(-lambda_v * Av) with lambda_v chosen by obs_extin.
+
+    For Type Ia (obs_extin='ia'), uses the Jha et al. empirical Av distribution
+    directly as a PDF by normalizing the counts to unit area via trapezoid
+    integration and linearly interpolating between bins. Returns 0 outside the
+    range of the data. No parametric fitting is performed, so the shape of the
+    distribution is faithfully preserved. The interpolator is cached after the
+    first call so the file is only read once per session.
+
+    In both cases the input Av should already be in V-band units, converted from
+    the iterated Q-band extinction da via the Calzetti law ratio computed upstream
+    in run() as: Av = da * Av_over_AQ_calzetti_ratio.
+
+    Parameters
+    ----------
+    Av : float
+        Host galaxy extinction in V-band magnitudes.
+    obs_extin : str
+        Extinction distribution to use. CC options: 'nominal', 'steep',
+        'shallow', 'kelly', 'arp299'. Ia option: 'ia'.
+    base_root : str, optional
+        Path to the BoomRate root directory. Required when obs_extin='ia'
+        so the Jha ext file can be located. Ignored for CC branches.
+    _jha_cache : dict
+        Internal mutable-default cache; do not pass this explicitly.
+        Stores the normalized Jha interpolator after the first call.
+
+    Returns
+    -------
+    PAv : float
+        Probability density P(Av) for the given extinction value.
+    """
+
+    if obs_extin == 'jha':
+        # Build the empirical PDF interpolator on first call and cache it.
+        if 'interp' not in _jha_cache:
+            if base_root is None:
+                raise ValueError(
+                    "base_root must be provided to prob_Av when obs_extin='jha' "
+                    "so the Jha extinction file can be located."
+                )
+            Jha     = loadtxt(base_root + '/Jha_ext.txt')
+            av_bins = Jha[:, 0]
+            counts  = Jha[:, 1]
+            # Normalize counts to unit area using the trapezoid rule so that
+            # the interpolated function integrates to 1 over the data range.
+            norm    = np.trapezoid(counts, av_bins)
+            weights = counts / norm
+            # Linear interpolation; returns 0 outside the data range (fill_value=0),
+            # which is physically correct — no SNe Ia observed beyond the last bin.
+            _jha_cache['interp'] = scipy_interp1d(
+                av_bins, weights, kind='linear', bounds_error=False, fill_value=0.0
+            )
+
+        return float(_jha_cache['interp'](Av))
+
+    # CC branches: parameterized exponential
+    # P(Av) = lambda_v * exp(-lambda_v * Av), already normalized by scipy.
+    elif obs_extin == 'nominal':    # shallowest
         lambda_v = 0.187
-    elif obs_extin=='steep':
-        lambda_v= 5.36 #from HP02
-        #lambda_v=9.72 #from HBD98
-    elif obs_extin =='shallow':
-        lambda_v = 2.27 # Dahlen 2012
+    elif obs_extin == 'steep':
+        lambda_v = 5.36           # from HP02
+    elif obs_extin == 'shallow':
+        lambda_v = 2.27           # Dahlen 2012
     elif obs_extin == 'kelly':
-        lambda_v = 1 # from Kelly 2012
+        lambda_v = 1.0            # Kelly 2012
     elif obs_extin == 'arp299':
-        lambda_v = 0.025 ## nuclear region of Arp299, see ref. in Bondi et al. 2012
+        lambda_v = 0.025          # nuclear region of Arp299, Bondi et al. 2012
     else:
-        raise ValueError("Invalid extinction distribution provided")
+        raise ValueError(
+            "Invalid obs_extin '%s'. Valid options: "
+            "'jha', 'nominal', 'steep', 'shallow', 'kelly', 'arp299'." % obs_extin
+        )
 
-    PAv = scipy.stats.expon.pdf(Av,scale=1/lambda_v)
-    return PAv
+    return scipy.stats.expon.pdf(Av, scale=1. / lambda_v)
 
 # -----------------------------------------------------------------------------------------------------
 
@@ -972,6 +1043,34 @@ def calzetti(x,Rv=4.05): # in microns
 '''
 
 '''
+def ext_dist_Ia(ext,observed_filter,redshift,passskiprow,passwavemult,sndata_root):
+    from scipy.optimize import curve_fit
+    f1 = sndata_root +'/filters/Bessell90/Bessell90_K09/Bessell90_V.dat'
+    w1 = get_central_wavelength(f1, wavemult=0.1)/1e3
+    w2 = get_central_wavelength(observed_filter, skip=passskiprow, wavemult=passwavemult)/1e3/(1.0+redshift)
+    A_1 = calzetti(array([w1]))
+    A_2 = calzetti(array([w2]))
+
+
+    Jha = loadtxt(base_root+'/templates/Jha_ext.txt')
+    Jha[:,0] = Jha[:,0]/A_1*A_2
+    p0 = [1.,1.]
+    p1,pcov = curve_fit(u.exp_fit,Jha[:,0], Jha[:,1], p0=p0)
+    norm = quad(u.exp_fit,0., inf, args=tuple(p1))[0]
+    return(u.exp_fit(ext,*p1)/norm)
+
+def rest_frame_Ia_lightcurve(dstep=3, verbose=True):
+    models_dir = sndata_root+'/models/mlcs2k2/mlcs2k2.v007/'
+    rest_age = arange(-20,730.5,dstep)
+    mag_dict={}
+    for model in glob.glob(models_dir+'vectors_?.dat'):
+        data = loadtxt(model)
+        junk, yy = u.recast(rest_age, 0., data[:,0],data[:,1])
+        filter = os.path.basename(model).split('_')[1][0]
+        elam = get_central_wavelength(sndata_root+'/filters/Bessell90/Bessell90_K09/Bessell90_'+filter+'.dat', wavemult=0.1)
+        mag_dict[elam]=yy
+    return(rest_age,mag_dict)
+
 def fline(x,*p):
     m,b = p
     return m*x+b

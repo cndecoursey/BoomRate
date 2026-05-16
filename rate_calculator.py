@@ -167,7 +167,7 @@ def load_vol_frac(name=None, vol_frac_file=None):
 
 
 def run(redshift2, redshift1, rate_guess, Nobs, diag_dir, base_root, sndata_root, lightcurve_path,sed_path,
-        types,passband,survey,m50=30,T=1.0,S=0.30,Nproc=1,extinction=True,obs_extin='nominal',
+        types,passband,survey,m50=30,T=1.0,S=0.30,Nproc=1,extinction=True,obs_extin=None,
         verbose=True, parallel=True, box_tc=True, passskiprow=1, passwavemult=0.1,
         dstep=0.5, dmstep=0.1, dastep=0.1, lc_smoothing_window=3,
         biascor=None, vol_frac=None,
@@ -461,11 +461,18 @@ def main(configfile=None):
     with open(configfile) as data_file:
         config = json.loads(data_file.read())
 
+    sntypes = config['sntypes']
     run_name = config['run_name']
     base_root = config['base_root']
     sndata_root = config['sndata_root']
     spectral_template_ref = config['spectral_template_ref']
-    sed_path = sndata_root + '/models/NON1ASED/' + spectral_template_ref
+    if 'ia' not in sntypes:
+        sed_path = sndata_root + '/models/NON1ASED/' + spectral_template_ref
+    elif 'ia' in sntypes:
+        sed_path = sndata_root + '/snsed'
+    else:
+        raise ValueError("Invalid SN types: %s" % sntypes)
+
     lightcurve_path = base_root + '/broadband_lightcurves/' + spectral_template_ref
 
     clobber = json.loads(config['clobber'])
@@ -475,7 +482,6 @@ def main(configfile=None):
     review = json.loads(config['review'])
     
     #survey
-    sntypes = config['sntypes']
     imf_evol = config['imf_evol']
     extinction = json.loads(config['extinction'])
     obs_extin = config['obs_extin']

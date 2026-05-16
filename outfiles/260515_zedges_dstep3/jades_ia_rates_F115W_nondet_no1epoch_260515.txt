@@ -1,0 +1,2 @@
+#z,z_low,z_hi,R,R_+err,R_-err,N_exp,N_+err,N_-err,Nobs,tc_rest,Dvol,R_g
+3.54,2.90,4.17,0.00,3.66,0.00,0.0,0.1,0.0,0.0,0.058,8.75,0.09
